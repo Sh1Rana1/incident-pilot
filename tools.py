@@ -13,8 +13,10 @@ MAX_FILE_CHARS = 20_000
 MAX_SEARCH_MATCHES = 50
 MAX_LIST_ITEMS = 200
 IGNORED_DIRS = {
-    ".git", ".venv", "__pycache__", "node_modules", "build", "dist", ".pytest_cache"
+    ".git", ".venv", ".incident_cache", "evals", "__pycache__", "node_modules", "build",
+    "dist", ".pytest_cache",
 }
+INTERNAL_ONLY_DIRS = {".incident_cache", "evals"}
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}
 
@@ -43,6 +45,10 @@ def _is_ignored(path: Path) -> bool:
     return any(part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts)
 
 
+def _is_internal_only(path: Path) -> bool:
+    return any(part in INTERNAL_ONLY_DIRS for part in path.relative_to(PROJECT_ROOT).parts)
+
+
 @registry.register(
     name="read_file",
     description="读取项目内指定 UTF-8 文本文件，返回带行号的内容。",
@@ -50,6 +56,8 @@ def _is_ignored(path: Path) -> bool:
 )
 def read_file(arguments: ReadFileArgs) -> ToolResult:
     file_path = _safe_path(arguments.path)
+    if _is_internal_only(file_path):
+        return ToolResult.failure("该路径属于评测或内部缓存目录，不能提供给 Agent")
     if file_path.name in SENSITIVE_FILES:
         return ToolResult.failure("出于安全原因，不能读取敏感配置文件", path=arguments.path)
     if not file_path.is_file():
@@ -141,3 +149,8 @@ def list_files(arguments: ListFilesArgs) -> ToolResult:
         max_depth=arguments.max_depth,
         truncated=truncated,
     )
+
+
+# 分模块实现工具，但在导入 tools 时统一触发注册。
+import knowledge_tools  # noqa: E402,F401
+import git_tools  # noqa: E402,F401

@@ -1,0 +1,8 @@
+{
+  "case_id": "schema_mismatch",
+  "question": "创建用户时报 table users has no column named user_id，请找出根因。",
+  "expected_exception": "sqlite3.OperationalError",
+  "root_cause_keywords": ["external_id", "迁移", "Repository"],
+  "evidence_files": ["demo_app/app/database.py", "demo_app/app/repository.py"],
+  "relevant_docs": ["demo_app/docs/database.md", "demo_app/docs/incidents/INC-002-schema-mismatch.md"]
+}

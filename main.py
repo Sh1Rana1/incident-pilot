@@ -6,7 +6,7 @@ from models import IncidentReport
 
 def format_report(report: IncidentReport) -> str:
     evidence = "\n".join(
-        f"{index}. {item.file or '未知文件'}"
+        f"{index}. [{item.source_type}] {item.file or '未知文件'}"
         f"{f':{item.line}' if item.line is not None else ''} — {item.description}"
         for index, item in enumerate(report.evidence, 1)
     ) or "无"
@@ -23,7 +23,7 @@ def format_report(report: IncidentReport) -> str:
 
 
 def main() -> None:
-    print("IncidentPilot V2（输入 exit 退出）")
+    print("IncidentPilot V3 · LangGraph（输入 exit 退出）")
     while True:
         try:
             question = input("\n请粘贴报错或描述问题：\n> ").strip()

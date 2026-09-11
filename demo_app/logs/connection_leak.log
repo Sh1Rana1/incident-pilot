@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/app/worker.py", in process_job
+    connection = pool.acquire()
+  File "demo_app/app/pool.py", in acquire
+    raise RuntimeError("connection pool exhausted")
+RuntimeError: connection pool exhausted

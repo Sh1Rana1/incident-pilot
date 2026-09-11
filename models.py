@@ -25,6 +25,9 @@ class ToolResult(StrictModel):
 
 
 class Evidence(StrictModel):
+    source_type: Literal["code", "documentation", "git", "runtime", "unknown"] = Field(
+        description="证据来源类型"
+    )
     file: str = Field(description="证据所在的项目相对路径；未知时填空字符串")
     line: Optional[int] = Field(description="证据行号；无法确定时填 null")
     description: str = Field(description="这条证据说明了什么")

@@ -1,0 +1,8 @@
+{
+  "case_id": "missing_user_id",
+  "question": "运行 missing_user_id 案例出现 KeyError: 'user_id'，请找出根因。",
+  "expected_exception": "KeyError",
+  "root_cause_keywords": ["API", "校验", "user_id"],
+  "evidence_files": ["demo_app/app/api.py", "demo_app/app/service.py"],
+  "relevant_docs": ["demo_app/docs/api.md", "demo_app/docs/incidents/INC-001-missing-user-id.md"]
+}

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", in run_case
+    post_users({"email": "demo@example.com"}, create_connection())
+  File "demo_app/app/api.py", in post_users
+    create_user(payload, connection)
+  File "demo_app/app/service.py", in create_user
+    user_id = payload["user_id"]
+KeyError: 'user_id'

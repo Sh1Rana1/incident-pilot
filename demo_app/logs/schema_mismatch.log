@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "demo_app/app/repository.py", in insert_user
+    connection.execute("INSERT INTO users (user_id, email) VALUES (?, ?)", values)
+sqlite3.OperationalError: table users has no column named user_id
