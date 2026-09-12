@@ -1,11 +1,11 @@
-"""V2 离线测试：注册、参数校验、统一结果、文件工具和报告格式。"""
+"""V7 离线测试：注册、隔离、只读工具和报告展示。"""
 
 import json
 import unittest
 
 from config import resolve_capabilities
 from main import format_report
-from models import Evidence, IncidentReport, ToolResult
+from models import DiagnosticClaim, Evidence, IncidentReport, ToolResult
 from registry import registry
 
 
@@ -105,20 +105,127 @@ class FileToolTests(unittest.TestCase):
             for entry in list_result.data["entries"]
         ))
 
+    def test_evaluation_infrastructure_is_hidden_during_agent_run(self) -> None:
+        allowed = {"list_files", "search_code", "read_file"}
+        listed = ToolResult.model_validate_json(registry.execute(
+            "list_files", '{"path":".","max_depth":1}',
+            allowed_tools=allowed, tool_profile="code_only",
+        ))
+        paths = {item["path"] for item in listed.data["entries"]}
+        self.assertNotIn("test_evaluation.py", paths)
+        self.assertNotIn("run_evals.py", paths)
+        read_result = ToolResult.model_validate_json(registry.execute(
+            "read_file", '{"path":"test_evaluation.py"}',
+            allowed_tools=allowed, tool_profile="code_only",
+        ))
+        self.assertFalse(read_result.ok)
+        searched = ToolResult.model_validate_json(registry.execute(
+            "search_code", '{"query":"missing_root_cause_keywords"}',
+            allowed_tools=allowed, tool_profile="code_only",
+        ))
+        self.assertFalse(any(
+            item["path"] in {"evaluation.py", "test_evaluation.py"}
+            for item in searched.data["matches"]
+        ))
+
+    def test_generated_evaluation_reports_are_not_visible(self) -> None:
+        listed = call_tool("list_files", {"path": ".", "max_depth": 2})
+        self.assertNotIn(".incident_reports", str(listed.data))
+        result = call_tool(
+            "read_file",
+            {"path": ".incident_reports/eval-20260911-182414.json"},
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("内部", result.error or "")
+
+    def test_profile_hides_rag_documents_from_file_tools(self) -> None:
+        allowed = {"read_file", "search_code", "list_files"}
+        read_result = ToolResult.model_validate_json(registry.execute(
+            "read_file",
+            '{"path":"demo_app/docs/api.md"}',
+            allowed_tools=allowed,
+            tool_profile="code_only",
+        ))
+        self.assertFalse(read_result.ok)
+        self.assertEqual(read_result.meta["reason"], "rag_required_for_path")
+
+        search_result = ToolResult.model_validate_json(registry.execute(
+            "search_code",
+            '{"query":"MIG-2026-001"}',
+            allowed_tools=allowed,
+            tool_profile="code_only",
+        ))
+        self.assertFalse(any(
+            match["path"].startswith("demo_app/docs/")
+            for match in search_result.data["matches"]
+        ))
+        self.assertFalse(any(
+            match["path"].endswith(".md")
+            for match in search_result.data["matches"]
+        ))
+
+        list_result = ToolResult.model_validate_json(registry.execute(
+            "list_files",
+            '{"path":"demo_app","max_depth":3}',
+            allowed_tools=allowed,
+            tool_profile="code_rag",
+        ))
+        self.assertFalse(any(
+            entry["path"].startswith("demo_app/docs/")
+            for entry in list_result.data["entries"]
+        ))
+        self.assertFalse(any(
+            entry["path"].endswith(".md")
+            for entry in list_result.data["entries"]
+        ))
+
+    def test_profile_cannot_read_hidden_provider_fixture(self) -> None:
+        result = ToolResult.model_validate_json(registry.execute(
+            "read_file",
+            '{"path":"demo_app/fixtures/provider_gateway.py"}',
+            allowed_tools={"read_file"},
+            tool_profile="full",
+        ))
+        self.assertFalse(result.ok)
+        self.assertIn("内部", result.error or "")
+        listed = ToolResult.model_validate_json(registry.execute(
+            "list_files",
+            '{"path":"demo_app","max_depth":3}',
+            allowed_tools={"list_files"},
+            tool_profile="full",
+        ))
+        self.assertNotIn("fixtures", str(listed.data))
+        searched = ToolResult.model_validate_json(registry.execute(
+            "search_code",
+            '{"query":"PROVIDER_TIMEOUT_LIMIT_SECONDS"}',
+            allowed_tools={"search_code"},
+            tool_profile="full",
+        ))
+        self.assertFalse(any(
+            match["path"].startswith("demo_app/fixtures/")
+            for match in searched.data["matches"]
+        ))
+
 
 class ReportTests(unittest.TestCase):
     def test_human_readable_report(self) -> None:
         report = IncidentReport(
             summary="发现问题",
             root_cause="缺少字段",
+            claims=[DiagnosticClaim(
+                claim_id="C1", statement="缺少字段", evidence_ids=["E1"]
+            )],
             evidence=[Evidence(
-                source_type="code", file="app.py", line=3, description="直接读取字段"
+                evidence_id="E1", observation_id="obs-001", source_type="code",
+                file="app.py", line_start=3, line_end=3, commit_hash=None,
+                description="直接读取字段"
             )],
             suggested_fixes=["校验字段"],
             confidence="high",
         )
         rendered = format_report(report)
         self.assertIn("app.py:3", rendered)
+        self.assertIn("obs-001", rendered)
         self.assertIn("置信度：high", rendered)
 
 
@@ -131,6 +238,7 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertIn("source", first)
         self.assertIn("section", first)
         self.assertIn("line_start", first)
+        self.assertIn("line_end", first)
         self.assertIn("score", first)
 
     def test_retrieve_docs_uses_cache_on_second_call(self) -> None:
@@ -165,7 +273,9 @@ class GitToolTests(unittest.TestCase):
     def test_git_log_is_limited(self) -> None:
         result = call_tool("git_log", {"limit": 1})
         self.assertTrue(result.ok)
-        self.assertIn("feat: build IncidentPilot", result.data["output"])
+        lines = [line for line in result.data["output"].splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0].split("\t")), 4)
 
     def test_git_diff_blocks_sensitive_file(self) -> None:
         result = call_tool("git_diff", {"path": "api.env"})
@@ -176,6 +286,11 @@ class GitToolTests(unittest.TestCase):
         result = call_tool("git_diff", {"path": "demo_app/evals"})
         self.assertFalse(result.ok)
         self.assertIn("评测", result.error or "")
+
+    def test_git_diff_rejects_broad_repository_path(self) -> None:
+        result = call_tool("git_diff", {"path": "."})
+        self.assertFalse(result.ok)
+        self.assertIn("文件", result.error or "")
 
     def test_git_arguments_are_validated(self) -> None:
         result = call_tool("git_log", {"limit": 100})

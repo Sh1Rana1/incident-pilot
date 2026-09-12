@@ -7,6 +7,7 @@ from pydantic import Field
 from models import StrictModel, ToolResult
 from registry import registry
 from tools import MAX_FILE_CHARS, PROJECT_ROOT, SENSITIVE_FILES, _is_internal_only, _safe_path
+from tool_profiles import direct_file_access_blocked
 
 
 GIT_TIMEOUT_SECONDS = 8
@@ -67,7 +68,7 @@ def git_status(arguments: EmptyArgs) -> ToolResult:
 
 @registry.register(
     name="git_diff",
-    description="只读查看工作区中指定文件或目录的未提交差异。",
+    description="只读查看工作区中一个指定代码文件的未提交差异；不接受目录或点号。",
     arguments_model=GitDiffArgs,
 )
 def git_diff(arguments: GitDiffArgs) -> ToolResult:
@@ -76,7 +77,11 @@ def git_diff(arguments: GitDiffArgs) -> ToolResult:
         return ToolResult.failure("不能查看评测答案或内部缓存目录的差异")
     if path.name in SENSITIVE_FILES:
         return ToolResult.failure("出于安全原因，不能查看敏感配置文件的差异")
-    relative = path.relative_to(PROJECT_ROOT).as_posix() or "."
+    if not path.is_file():
+        return ToolResult.failure("Git Diff 必须指定一个已存在的文件，不能使用目录或点号")
+    relative = path.relative_to(PROJECT_ROOT).as_posix()
+    if direct_file_access_blocked(relative):
+        return ToolResult.failure("当前工具 Profile 禁止通过 Git Diff 绕过文档隔离")
     return _run_git(["diff", "--no-ext-diff", "--unified=3", "--", relative])
 
 

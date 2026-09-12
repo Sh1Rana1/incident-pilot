@@ -3,3 +3,4 @@ api.env
 __pycache__/
 *.py[cod]
 .incident_cache/
+.incident_reports/

@@ -18,6 +18,11 @@ class AppConfig:
     model: str
     output_mode: OutputMode
     strict_tools: bool
+    max_model_calls: int = 10
+    max_tool_calls: int = 20
+    max_tools_per_step: int = 3
+    hitl_model_threshold: int = 5
+    hitl_tool_threshold: int = 10
 
 
 def _parse_bool(value: str, name: str) -> bool:
@@ -70,4 +75,25 @@ def load_config(root: Path) -> AppConfig:
         os.getenv("OUTPUT_MODE", "auto"),
         os.getenv("STRICT_TOOLS", "auto"),
     )
-    return AppConfig(api_key, base_url, model, output_mode, strict_tools)
+    def positive_int(name: str, default: int) -> int:
+        raw = os.getenv(name, str(default)).strip()
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise RuntimeError(f"{name} 必须是正整数。") from exc
+        if value < 1:
+            raise RuntimeError(f"{name} 必须是正整数。")
+        return value
+
+    return AppConfig(
+        api_key,
+        base_url,
+        model,
+        output_mode,
+        strict_tools,
+        max_model_calls=positive_int("MAX_MODEL_CALLS", 10),
+        max_tool_calls=positive_int("MAX_TOOL_CALLS", 20),
+        max_tools_per_step=positive_int("MAX_TOOLS_PER_STEP", 3),
+        hitl_model_threshold=positive_int("HITL_MODEL_CALL_THRESHOLD", 5),
+        hitl_tool_threshold=positive_int("HITL_TOOL_CALL_THRESHOLD", 10),
+    )

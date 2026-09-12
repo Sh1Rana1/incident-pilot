@@ -6,6 +6,7 @@ from pydantic import Field
 
 from models import StrictModel, ToolResult
 from registry import registry
+from tool_profiles import direct_file_access_blocked
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -13,10 +14,17 @@ MAX_FILE_CHARS = 20_000
 MAX_SEARCH_MATCHES = 50
 MAX_LIST_ITEMS = 200
 IGNORED_DIRS = {
-    ".git", ".venv", ".incident_cache", "evals", "__pycache__", "node_modules", "build",
-    "dist", ".pytest_cache",
+    ".git", ".venv", ".incident_cache", ".incident_reports", "evals", "__pycache__",
+    "node_modules", "build", "dist", ".pytest_cache", "fixtures",
 }
-INTERNAL_ONLY_DIRS = {".incident_cache", "evals"}
+INTERNAL_ONLY_DIRS = {".incident_cache", ".incident_reports", "evals", "fixtures"}
+INTERNAL_ONLY_FILES = {
+    "evaluation.py",
+    "experiments.py",
+    "run_evals.py",
+    "test_evaluation.py",
+    "test_experiments.py",
+}
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}
 
@@ -42,11 +50,23 @@ def _safe_path(relative_path: str) -> Path:
 
 
 def _is_ignored(path: Path) -> bool:
-    return any(part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts)
+    return path.name in INTERNAL_ONLY_FILES or any(
+        part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts
+    )
 
 
 def _is_internal_only(path: Path) -> bool:
-    return any(part in INTERNAL_ONLY_DIRS for part in path.relative_to(PROJECT_ROOT).parts)
+    return path.name in INTERNAL_ONLY_FILES or any(
+        part in INTERNAL_ONLY_DIRS for part in path.relative_to(PROJECT_ROOT).parts
+    )
+
+
+def _relative_path(path: Path) -> str:
+    return path.relative_to(PROJECT_ROOT).as_posix()
+
+
+def _direct_access_blocked(path: Path) -> bool:
+    return direct_file_access_blocked(_relative_path(path))
 
 
 @registry.register(
@@ -60,6 +80,12 @@ def read_file(arguments: ReadFileArgs) -> ToolResult:
         return ToolResult.failure("该路径属于评测或内部缓存目录，不能提供给 Agent")
     if file_path.name in SENSITIVE_FILES:
         return ToolResult.failure("出于安全原因，不能读取敏感配置文件", path=arguments.path)
+    if _direct_access_blocked(file_path):
+        return ToolResult.failure(
+            "当前工具 Profile 禁止直接读取知识文档，请使用 retrieve_docs",
+            path=arguments.path,
+            reason="rag_required_for_path",
+        )
     if not file_path.is_file():
         return ToolResult.failure("文件不存在", path=arguments.path)
     try:
@@ -89,6 +115,8 @@ def search_code(arguments: SearchCodeArgs) -> ToolResult:
     query_lower = arguments.query.lower()
     for file_path in PROJECT_ROOT.rglob("*"):
         if _is_ignored(file_path) or file_path.name in SENSITIVE_FILES:
+            continue
+        if _direct_access_blocked(file_path):
             continue
         if not file_path.is_file() or file_path.suffix.lower() not in SEARCHABLE_SUFFIXES:
             continue
@@ -126,12 +154,20 @@ def list_files(arguments: ListFilesArgs) -> ToolResult:
         return ToolResult.failure("目录不存在", path=arguments.path)
     if not start.is_dir():
         return ToolResult.failure("指定路径不是目录", path=arguments.path)
+    if _direct_access_blocked(start):
+        return ToolResult.failure(
+            "当前工具 Profile 禁止直接浏览知识文档，请使用 retrieve_docs",
+            path=arguments.path,
+            reason="rag_required_for_path",
+        )
 
     base_depth = len(start.relative_to(PROJECT_ROOT).parts)
     entries: list[dict] = []
     truncated = False
     for path in sorted(start.rglob("*"), key=lambda item: item.as_posix().lower()):
         if _is_ignored(path) or path.name in SENSITIVE_FILES:
+            continue
+        if _direct_access_blocked(path):
             continue
         depth = len(path.relative_to(PROJECT_ROOT).parts) - base_depth
         if depth > arguments.max_depth:

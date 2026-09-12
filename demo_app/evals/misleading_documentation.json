@@ -1,0 +1,8 @@
+{
+  "case_id": "misleading_documentation",
+  "question": "有人根据旧文档建议扩大连接池，但连续处理无效任务后仍会 connection pool exhausted。请判断旧建议是否有效并找出真正根因。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["release", "异常", "泄漏"],
+  "evidence_files": ["demo_app/app/worker.py", "demo_app/app/pool.py"],
+  "relevant_docs": ["demo_app/docs/runbook.md", "demo_app/docs/archive/legacy-pool-guide.md"]
+}

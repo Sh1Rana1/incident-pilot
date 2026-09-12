@@ -1,14 +1,28 @@
-"""运行三个确定性故障案例：python -m demo_app.run_case <case_id>。"""
+"""运行三个确定性故障案例，支持模块和脚本两种启动方式。"""
 
 import argparse
+import sys
+from pathlib import Path
+
+
+# 直接执行 ``python demo_app/run_case.py`` 时，Python 只把 demo_app 目录
+# 放进模块搜索路径。显式加入项目根目录，让下面的绝对导入也能找到 demo_app。
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from demo_app.app.api import post_users
 from demo_app.app.database import create_connection
 from demo_app.app.pool import ConnectionPool
 from demo_app.app.worker import process_job
+from demo_app.app.webhook import deliver_webhook
 
 
-CASES = ("missing_user_id", "schema_mismatch", "connection_leak")
+CASES = (
+    "missing_user_id",
+    "schema_mismatch",
+    "connection_leak",
+    "documentation_required",
+)
 
 
 def run_case(case_id: str) -> None:
@@ -27,6 +41,8 @@ def run_case(case_id: str) -> None:
             except ValueError:
                 pass
         process_job(pool, should_fail=False)
+    elif case_id == "documentation_required":
+        deliver_webhook()
     else:
         raise ValueError(f"未知案例: {case_id}")
 

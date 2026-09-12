@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ValidationError
 
 from models import ToolResult
+from tool_profiles import activate_tool_profile, reset_tool_profile
 
 
 ToolFunction = Callable[[BaseModel], ToolResult]
@@ -33,7 +34,11 @@ class ToolRegistry:
             return function
         return decorator
 
-    def schemas(self, strict: bool = True) -> list[dict]:
+    def schemas(
+        self,
+        strict: bool = True,
+        allowed_tools: frozenset[str] | set[str] | None = None,
+    ) -> list[dict]:
         return [
             {
                 "type": "function",
@@ -45,16 +50,33 @@ class ToolRegistry:
                 },
             }
             for tool in self._tools.values()
+            if allowed_tools is None or tool.name in allowed_tools
         ]
 
-    def execute(self, name: str, arguments_json: str) -> str:
+    def execute(
+        self,
+        name: str,
+        arguments_json: str,
+        allowed_tools: frozenset[str] | set[str] | None = None,
+        tool_profile: str | None = None,
+    ) -> str:
         """严格校验参数并始终返回 ToolResult JSON。"""
+        if allowed_tools is not None and name not in allowed_tools:
+            return ToolResult.failure(
+                f"当前工具 Profile 不允许调用: {name}",
+                tool=name,
+                reason="tool_not_allowed",
+            ).model_dump_json()
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult.failure(f"工具不存在: {name}", tool=name).model_dump_json()
         try:
             arguments = tool.arguments_model.model_validate_json(arguments_json)
-            result = tool.function(arguments)
+            profile_token = activate_tool_profile(tool_profile)
+            try:
+                result = tool.function(arguments)
+            finally:
+                reset_tool_profile(profile_token)
         except ValidationError as exc:
             result = ToolResult.failure(
                 "工具参数校验失败", tool=name, validation_errors=json.loads(exc.json())

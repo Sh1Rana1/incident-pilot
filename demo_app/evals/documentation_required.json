@@ -1,0 +1,8 @@
+{
+  "case_id": "documentation_required",
+  "question": "Webhook payload 合法，但 Acme Notify v2 返回 HTTP 422: timeout_policy_violation。请找出准确根因，并说明 timeout_seconds 应配置为多少。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["timeout_seconds", "30 秒", "10 秒"],
+  "evidence_files": ["demo_app/app/webhook.py"],
+  "relevant_docs": ["demo_app/docs/integrations.md"]
+}

@@ -19,6 +19,7 @@ class DocumentChunk:
     source: str
     section: str
     line_start: int
+    line_end: int
     content: str
     vector: list[float]
 
@@ -50,11 +51,14 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
-def _window(text: str) -> list[str]:
+def _window(text: str) -> list[tuple[int, str]]:
     if len(text) <= MAX_CHUNK_CHARS:
-        return [text]
+        return [(0, text)]
     step = MAX_CHUNK_CHARS - CHUNK_OVERLAP_CHARS
-    return [text[start:start + MAX_CHUNK_CHARS] for start in range(0, len(text), step)]
+    return [
+        (start, text[start:start + MAX_CHUNK_CHARS])
+        for start in range(0, len(text), step)
+    ]
 
 
 def split_markdown(path: Path, project_root: Path) -> list[DocumentChunk]:
@@ -77,7 +81,9 @@ def split_markdown(path: Path, project_root: Path) -> list[DocumentChunk]:
     source = path.relative_to(project_root).as_posix()
     for section, start, section_lines in sections:
         content = "\n".join(section_lines).strip()
-        for part_number, part in enumerate(_window(content), 1):
+        for part_number, (character_start, part) in enumerate(_window(content), 1):
+            part_line_start = start + content[:character_start].count("\n")
+            part_line_end = part_line_start + part.count("\n")
             chunk_id = hashlib.sha256(
                 f"{source}:{section}:{part_number}:{part}".encode("utf-8")
             ).hexdigest()[:16]
@@ -85,7 +91,8 @@ def split_markdown(path: Path, project_root: Path) -> list[DocumentChunk]:
                 chunk_id=chunk_id,
                 source=source,
                 section=section,
-                line_start=start,
+                line_start=part_line_start,
+                line_end=part_line_end,
                 content=part,
                 vector=_embed(f"{section}\n{part}"),
             ))
@@ -150,6 +157,7 @@ class LocalDocumentIndex:
                 "source": chunk.source,
                 "section": chunk.section,
                 "line_start": chunk.line_start,
+                "line_end": chunk.line_end,
                 "content": chunk.content,
                 "score": round(score, 4),
             }
