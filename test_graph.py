@@ -47,6 +47,7 @@ def grounded_report(observation_id="obs-001", line_start=1):
             "line_start": line_start,
             "line_end": line_start,
             "commit_hash": None,
+            "runtime_id": None,
             "description": "main.py 的已读取代码行",
         }],
         "suggested_fixes": [],
@@ -116,6 +117,19 @@ def initial_state(max_steps=8):
         "hitl_tool_threshold": 10,
         "cancelled": False,
         "hypothesis_update_required": False,
+        "runtime_tools_enabled": False,
+        "runtime_execution_preapproved": False,
+        "runtime_execution_decision": None,
+        "runtime_call_count": 0,
+        "successful_runtime_call_count": 0,
+        "runtime_timeout_count": 0,
+        "runtime_approval_count": 0,
+        "runtime_denial_count": 0,
+        "runtime_replay_count": 0,
+        "max_runtime_calls": 1,
+        "runtime_ledger_path": None,
+        "thread_id": "test-thread",
+        "recalled_memory_count": 0,
     }
 
 
@@ -583,6 +597,82 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(resumed["stop_reason"], "completed")
         self.assertEqual(resumed["human_review_count"], 1)
         self.assertTrue(resumed["synthesis_attempted"])
+
+    def test_runtime_execution_interrupts_before_running_and_can_be_approved(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-runtime", "type": "function",
+                "function": {
+                    "name": "run_demo_case",
+                    "arguments": '{"case_id":"missing_user_id"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+        saver = InMemorySaver()
+        app = build_agent_graph(
+            client,
+            test_config(),
+            checkpointer=saver,
+            allowed_tools=TOOL_PROFILES["full_runtime"],
+            tool_profile="full_runtime",
+        )
+        state = initial_state()
+        state["human_review_enabled"] = True
+        state["runtime_tools_enabled"] = True
+        runtime = {"configurable": {"thread_id": "runtime-approval-test"}}
+
+        interrupted = app.invoke(state, config=runtime)
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(interrupted["runtime_call_count"], 0)
+        self.assertEqual(interrupted["observations"], [])
+
+        resumed = app.invoke(
+            Command(resume={"action": "approve"}),
+            config=runtime,
+        )
+        self.assertEqual(resumed["stop_reason"], "completed")
+        self.assertEqual(resumed["runtime_call_count"], 1)
+        self.assertEqual(resumed["successful_runtime_call_count"], 1)
+        self.assertEqual(resumed["runtime_approval_count"], 1)
+        source = resumed["observations"][0]["sources"][0]
+        self.assertEqual(source["source_type"], "runtime")
+        self.assertTrue(source["runtime_id"].startswith("runtime-missing_user_id-"))
+
+    def test_runtime_execution_denial_creates_failure_without_running(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-runtime", "type": "function",
+                "function": {
+                    "name": "run_demo_case",
+                    "arguments": '{"case_id":"schema_mismatch"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+        saver = InMemorySaver()
+        app = build_agent_graph(
+            client,
+            test_config(),
+            checkpointer=saver,
+            allowed_tools=TOOL_PROFILES["full_runtime"],
+            tool_profile="full_runtime",
+        )
+        state = initial_state()
+        state["human_review_enabled"] = True
+        state["runtime_tools_enabled"] = True
+        runtime = {"configurable": {"thread_id": "runtime-denial-test"}}
+
+        app.invoke(state, config=runtime)
+        resumed = app.invoke(
+            Command(resume={"action": "deny"}),
+            config=runtime,
+        )
+
+        self.assertEqual(resumed["runtime_call_count"], 0)
+        self.assertEqual(resumed["runtime_denial_count"], 1)
+        self.assertFalse(resumed["observations"][0]["ok"])
+        self.assertIn("用户拒绝", resumed["observations"][0]["error"])
 
     def test_parallel_tool_calls_cannot_exceed_hard_budget(self):
         client = FakeClient([

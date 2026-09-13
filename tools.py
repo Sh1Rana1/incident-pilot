@@ -14,16 +14,21 @@ MAX_FILE_CHARS = 20_000
 MAX_SEARCH_MATCHES = 50
 MAX_LIST_ITEMS = 200
 IGNORED_DIRS = {
-    ".git", ".venv", ".incident_cache", ".incident_reports", "evals", "__pycache__",
+    ".git", ".venv", ".incident_cache", ".incident_reports", ".incident_state",
+    "evals", "__pycache__",
     "node_modules", "build", "dist", ".pytest_cache", "fixtures",
 }
-INTERNAL_ONLY_DIRS = {".incident_cache", ".incident_reports", "evals", "fixtures"}
+INTERNAL_ONLY_DIRS = {
+    ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures"
+}
 INTERNAL_ONLY_FILES = {
     "evaluation.py",
     "experiments.py",
     "run_evals.py",
     "test_evaluation.py",
     "test_experiments.py",
+    "test_demo_app.py",
+    "test_runtime_tools.py",
 }
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}

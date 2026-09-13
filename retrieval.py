@@ -51,6 +51,17 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
+def _identifier_overlap(query: str, document: str) -> float:
+    """提高错误码和配置键的权重，避免中文泛词淹没精确标识符。"""
+    query_identifiers = set(re.findall(r"[a-z][a-z0-9_./-]{2,}", query.lower()))
+    if not query_identifiers:
+        return 0.0
+    document_identifiers = set(
+        re.findall(r"[a-z][a-z0-9_./-]{2,}", document.lower())
+    )
+    return len(query_identifiers & document_identifiers) / len(query_identifiers)
+
+
 def _window(text: str) -> list[tuple[int, str]]:
     if len(text) <= MAX_CHUNK_CHARS:
         return [(0, text)]
@@ -147,7 +158,14 @@ class LocalDocumentIndex:
         chunks, cache_hit = self.load()
         query_vector = _embed(query)
         ranked = sorted(
-            ((max(0.0, _cosine(query_vector, chunk.vector)), chunk) for chunk in chunks),
+            (
+                (
+                    max(0.0, _cosine(query_vector, chunk.vector))
+                    + _identifier_overlap(query, f"{chunk.section}\n{chunk.content}"),
+                    chunk,
+                )
+                for chunk in chunks
+            ),
             key=lambda item: item[0],
             reverse=True,
         )

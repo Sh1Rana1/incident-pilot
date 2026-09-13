@@ -35,7 +35,9 @@
 - `evals/`：根因关键词、证据文件和相关文档等标准答案。
 - `fixtures/`：用于稳定复现外部系统行为，Agent 不可读取。
 
-评测还提供 `git_regression` 和 `misleading_documentation` 两个不可单独执行的问题：前者复用连接泄漏代码来测量 Git 历史贡献，后者用于测量过时文档是否会干扰诊断。V8.1.1 会维护候选假设，新证据必须先归入假设才能继续调查；总结阶段保全全部真实证据候选，并把最终证据绑定到实际工具 Observation。
+评测还提供三个专项问题：`git_regression` 复用连接泄漏代码测量 Git 历史贡献，`misleading_documentation` 测量过时文档是否干扰诊断，这两个不能单独执行；`runtime_required` 复用 `documentation_required`，但额外要求 Agent 真正运行预登记案例，并在最终报告中引用系统生成的 Runtime ID。
+
+V9 会维护候选假设，新证据必须先归入假设才能继续调查；总结阶段保全全部真实证据候选，并把最终证据绑定到实际工具 Observation。Agent 使用的 Runtime 工具只能选择上面四个案例，不能传入任意命令。交互执行必须先在 `api.env` 设置 `ENABLE_RUNTIME_TOOLS=true`，随后每次运行仍要人工批准；Evaluation 则必须显式使用 `--profile full_runtime --allow-runtime`。
 
 测试命令：
 

@@ -1,13 +1,89 @@
 """命令行多行输入测试；不调用真实模型 API。"""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import main
-from models import IncidentReport
+from models import HumanReviewRequest, IncidentReport
 
 
 class MultilineInputTests(unittest.TestCase):
+    def test_new_parser_supports_detached_mode_and_doctor(self) -> None:
+        detached = main._build_parser().parse_args(["new", "--detach"])
+        doctor = main._build_parser().parse_args(["doctor"])
+        self.assertTrue(detached.detach)
+        self.assertEqual(doctor.command, "doctor")
+
+    @patch("main.resume_session")
+    @patch("main.request_human_review", side_effect=["approve", "summarize"])
+    def test_consecutive_reviews_are_resumed_in_same_process(
+        self, _review_mock, resume_mock
+    ) -> None:
+        request = HumanReviewRequest(
+            reason="runtime_execution",
+            message="是否运行？",
+            model_call_count=1,
+            tool_call_count=1,
+            hypotheses=[],
+            allowed_actions=["approve", "deny", "cancel"],
+        )
+        waiting = SimpleNamespace(thread_id="thread-stable", pending_review=request)
+        second_request = HumanReviewRequest(
+            reason="cost_threshold",
+            message="是否继续？",
+            model_call_count=5,
+            tool_call_count=10,
+            hypotheses=[],
+            allowed_actions=["continue", "summarize", "cancel"],
+        )
+        waiting_again = SimpleNamespace(
+            thread_id="thread-stable", pending_review=second_request
+        )
+        completed = SimpleNamespace(thread_id="thread-stable", pending_review=None)
+        resume_mock.side_effect = [waiting_again, completed]
+
+        result = main._continue_pending_reviews(SimpleNamespace(), waiting)
+
+        self.assertIs(result, completed)
+        self.assertEqual(resume_mock.call_count, 2)
+        self.assertEqual(resume_mock.call_args_list[0].args[1:], ("thread-stable", "approve"))
+        self.assertEqual(
+            resume_mock.call_args_list[1].args[1:], ("thread-stable", "summarize")
+        )
+
+    @patch("main.resume_session")
+    def test_keyboard_interrupt_keeps_waiting_session_for_later_resume(
+        self, resume_mock
+    ) -> None:
+        request = HumanReviewRequest(
+            reason="runtime_execution",
+            message="是否运行？",
+            model_call_count=1,
+            tool_call_count=1,
+            hypotheses=[],
+            allowed_actions=["approve", "deny", "cancel"],
+        )
+        waiting = SimpleNamespace(thread_id="thread-saved", pending_review=request)
+
+        def interrupt(_prompt: str) -> str:
+            raise KeyboardInterrupt
+
+        result = main._continue_pending_reviews(
+            SimpleNamespace(), waiting, input_fn=interrupt
+        )
+
+        self.assertIs(result, waiting)
+        resume_mock.assert_not_called()
+
+    def test_memory_subcommands_are_available(self) -> None:
+        args = main._build_parser().parse_args(
+            ["memory", "search", "KeyError", "user_id", "--limit", "2"]
+        )
+        self.assertEqual(args.memory_command, "search")
+        self.assertEqual(args.query, ["KeyError", "user_id"])
+        self.assertEqual(args.limit, 2)
+
     def test_traceback_lines_are_merged_into_one_question(self) -> None:
         entered_lines = iter([
             "Traceback (most recent call last):",
@@ -61,6 +137,7 @@ class MultilineInputTests(unittest.TestCase):
 
         run_agent_mock.assert_called_once_with(
             traceback,
+            tool_profile="full_runtime",
             human_review=True,
             review_handler=main.request_human_review,
         )

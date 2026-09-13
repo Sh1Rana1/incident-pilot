@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 .incident_cache/
 .incident_reports/
+.incident_state/

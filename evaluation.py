@@ -27,6 +27,7 @@ class EvaluationCase(StrictModel):
     root_cause_keywords: list[str]
     evidence_files: list[str]
     relevant_docs: list[str]
+    requires_runtime_evidence: bool = False
 
 
 class CaseScores(StrictModel):
@@ -50,6 +51,8 @@ class CaseScores(StrictModel):
     claim_total: int
     claim_coverage_rate: float
     provenance_violation_count: int
+    runtime_evidence_count: int
+    runtime_evidence_required: bool
     failure_reasons: list[str]
     passed: bool
 
@@ -121,6 +124,8 @@ def _citation_is_valid(project_root: Path, evidence: Evidence) -> bool:
     """验证证据文件存在，且可选行号落在真实文件范围内。"""
     if evidence.source_type == "git":
         return bool(evidence.commit_hash or evidence.file)
+    if evidence.source_type == "runtime":
+        return bool(evidence.runtime_id)
     if not evidence.file:
         return False
     root = project_root.resolve()
@@ -190,6 +195,10 @@ def score_case(
         for item in report.claims
     )
     provenance_errors = validate_report_provenance(report, result.observations)
+    runtime_evidence_count = sum(
+        grounded and item.source_type == "runtime" and bool(item.runtime_id)
+        for item, grounded in zip(report.evidence, grounding_results)
+    )
     citation_results = [
         _citation_is_valid(project_root, item) and grounded
         for item, grounded in zip(report.evidence, grounding_results)
@@ -229,6 +238,8 @@ def score_case(
         failure_reasons.append("unsupported_claims")
     if provenance_errors:
         failure_reasons.append(f"provenance_violations:{len(provenance_errors)}")
+    if case.requires_runtime_evidence and runtime_evidence_count == 0:
+        failure_reasons.append("missing_runtime_evidence")
     if result.metrics.stop_reason != "completed":
         failure_reasons.append(f"stop_reason:{result.metrics.stop_reason}")
     passed = not failure_reasons
@@ -253,6 +264,8 @@ def score_case(
         claim_total=len(report.claims),
         claim_coverage_rate=claim_rate,
         provenance_violation_count=len(provenance_errors),
+        runtime_evidence_count=runtime_evidence_count,
+        runtime_evidence_required=case.requires_runtime_evidence,
         failure_reasons=failure_reasons,
         passed=passed,
     )

@@ -1,0 +1,7 @@
+# V10.2 已验证的直接依赖版本。日常开发可使用 requirements.txt 的兼容范围，
+# 面试演示或复现稳定基线时使用本文件。
+openai==3.10.0
+python-dotenv==1.2.3
+pydantic==2.13.5
+langgraph==1.2.11
+langgraph-checkpoint-sqlite==3.1.1

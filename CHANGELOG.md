@@ -13,6 +13,147 @@
 
 ---
 
+## V10.2 Stable：交互收口、启动自检与可重复基线
+
+### 交互稳定性
+
+- `main.py new` 遇到 LangGraph interrupt 后不再默认退出。Checkpoint 仍先同步写盘，但 CLI 会当场显示审批请求、读取选择并在内部调用 `Command(resume=...)`。
+- 恢复后如果再次遇到 Runtime 或费用审批，同一个命令会继续处理，不要求用户反复复制调查 ID。
+- `Ctrl+C` 或 EOF 只结束当前 CLI，不自动批准、取消或删除调查；终端会给出精确 `resume` 命令，稍后可以从原节点继续。
+- `main.py resume` 同样支持连续审批自动恢复；新增 `main.py new --detach`，保留“遇到审批就保存退出”的异步使用方式。
+- CLI 显示的后续命令统一使用 `.\.venv` 虚拟环境 Python，减少激活脚本和解释器路径混淆。
+
+### 启动自检与依赖
+
+- 新增 `doctor.py` 和 `main.py doctor`，在本机检查 Python 版本、五个直接依赖、`api.env` 格式和 SQLite 状态库；独立 `doctor.py` 只有标准库依赖，即使 LangGraph 尚未安装也能报告问题。
+- `doctor` 不创建模型客户端、不发起网络请求、不输出 API Key；成功返回退出码 0，任一检查失败返回 1。
+- 新增 `requirements.lock`，记录本次完整测试使用的五个直接依赖精确版本；原 `requirements.txt` 继续保留兼容范围供日常升级。
+- V10 SQLite 数据库启动时自动迁移 Memory 召回字段，已有调查无需删除或重建。
+
+### 边界与兼容性
+
+- Runtime 仍必须在执行前得到明确授权；V10.2 只隐藏手工 resume 操作，没有绕过 HITL、Profile、开关、预算或幂等账本。
+- Memory 审批仍是非阻塞的事后管理，不会为了沉淀历史经验中断当前诊断。
+- `run_agent()`、无参数连续交互模式、Evaluation、工具 Schema 和报告格式保持兼容，没有新增 Agent 文件或命令权限。
+
+### 验证
+
+- 新增同进程审批恢复、中断后保留等待状态、`--detach`/`doctor` 命令、本地自检密钥隐藏和 V10 数据库迁移测试。
+- 124 项离线测试全部通过；使用假模型和临时 SQLite，未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V10.1：Audited Incident Memory（可审批事故记忆）
+
+### 新增
+
+- 新增 `IncidentMemory`、`IncidentMemoryMatch` 和 `MemoryStatus` 数据模型，长期记录异常类型、关键符号、来源文件、根因、解决建议、源调查 ID 与审批时间。
+- 新增 `memory.py`，负责合格候选提取、可解释词法相似度、确定性排序和安全上下文格式化。
+- SQLite 新增 `incident_memories` 表和状态索引；`incident_sessions` 自动迁移 `recalled_memory_ids_json` 字段，旧 V10 数据库可直接打开。
+- `main.py` 新增 `memory list/search/approve/reject/forget` 命令；所有记忆管理与检索都在本地完成，不调用模型。
+- 持久化 `new` 调查会召回最多 3 条相似 approved Memory，并把实际 Memory ID 写入会话索引，把召回数量写入 `RunMetrics` 和实验聚合。
+
+### 记忆生命周期
+
+- 只有 `completed`、medium/high 置信度、同时具有 Claim 和 Evidence，且所有 Claim 引用都能落到真实 Evidence 的报告，才生成 `pending` 候选。
+- 候选默认不能影响后续调查；只有用户显式 `approve` 后才进入召回池。`reject` 保留审计记录，`forget` 精确永久删除指定记录。
+- 同一源调查最多生成一条候选，重复完成或重复持久化不会造成重复记忆。
+- 召回使用异常类型、标识符、英文词和中文二元词组做本地排序，并对异常类型和关键符号精确匹配加权；没有 Embedding、向量数据库或额外 Token 成本。
+
+### 安全
+
+- 召回内容以“历史候选假设”注入 System 上下文，明确声明不是本次 Observation，不能作为 Claim/Evidence 或单独提高置信度。
+- `Evidence.source_type` 不接受 `memory`，历史结论必须通过当前代码、RAG、Git 或 Runtime 工具重新验证后才能进入最终证据链。
+- pending 和 rejected 记录完全不参与召回，降低未经人工筛选的错误报告造成记忆污染的风险。
+- 记忆数据保存在已隔离的 `.incident_state/incident_pilot.sqlite3`，不会被 Agent 文件工具读取或提交到 Git。
+
+### 兼容性
+
+- 原 `run_agent()` 和无参数 `main.py` 路径继续使用内存 Checkpoint，不读取或写入长期记忆，已有调用方行为不变。
+- 仅 `main.py new/resume` 持久化路径生成和召回 Memory；V10 的现有 SQLite 文件由启动迁移自动补字段，无需手工重建。
+- 没有新增 Python 依赖，也没有修改 `api.env` 配置格式。
+
+### 验证
+
+- 新增候选资格、审批状态、拒绝、删除、去重、本地排序、安全上下文、持久化注入、召回指标和非法 Memory Evidence 来源测试。
+- 118 项离线测试全部通过；持久化流程使用假模型，未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V10：Durable Agent Sessions 与 Runtime 幂等恢复
+
+### 新增
+
+- 新增 `session_store.py`，使用 `langgraph-checkpoint-sqlite` 的 `SqliteSaver` 将 LangGraph Checkpoint 持久化到 `.incident_state/incident_pilot.sqlite3`。
+- 新增 `incident_sessions` 会话索引，保存调查 ID、问题、Profile、Runtime 可见性、状态、累计计算时间、待处理审批、结果和失败原因。
+- 新增 `session_agent.py`，将调查启动与 `Command(resume=...)` 恢复分成可在不同 Python 进程执行的两个入口。
+- `main.py` 新增 `new`、`list`、`show <thread_id>` 和 `resume <thread_id>` 子命令；无参数运行仍保留 V9 传统交互模式。
+- 新增 `runtime_executions` 幂等账本。每个执行 ID 由 `thread_id + tool_call_id` 稳定派生，账本使用 `BEGIN IMMEDIATE` 原子领取执行权。
+- `RunMetrics` 和实验聚合新增 `runtime_replay_count`，区分真正执行和安全返回历史结果。
+
+### 恢复与一致性语义
+
+- `new` 在 LangGraph `interrupt()` 处同步写入 Checkpoint 和待处理审批，程序可立即退出；`resume` 重新打开 SQLite 并从原节点继续。
+- 已完成的相同 Runtime 执行不启动新子进程，而是重放原 `ToolResult`。
+- 账本为 `running` 但无完成结果时，视为外部副作不确定；系统拒绝自动重跑，而不假设上次执行没发生。
+- 这是以安全为优先的 at-most-once 倾向，不宣称外部进程与 SQLite 之间存在无条件 exactly-once 事务。
+
+### 安全
+
+- Checkpoint 使用严格 `JsonPlusSerializer`：关闭 pickle fallback，不允许 MsgPack 从自定义模块动态导入类。
+- API Key 不进入 AgentState 或会话表，恢复时从 `api.env` 重新创建模型客户端。
+- `.incident_state/` 同时加入 `.gitignore`、文件工具忽略目录和内部保护目录，Agent 不能列出、读取或搜索状态库。
+- Runtime 短连接显式提交或回滚并在 `finally` 中关闭，避免 Windows 下 SQLite 文件被残留句柄锁住。
+
+### 兼容性
+
+- `run_agent()` 和无参数 `main.py` 继续使用 `InMemorySaver`，旧调用方无需修改；只有显式使用新 CLI 子命令时才创建持久化数据库。
+- `requirements.txt` 新增 `langgraph-checkpoint-sqlite>=3.0.0,<4.0.0`；升级后需要重新安装依赖。
+- 普通 Evaluation 仍使用内存状态，不会在批量评测中自动创建持久化会话。
+
+### 验证
+
+- 新增会话索引关闭后重开、原生 LangGraph interrupt 跨 Store 恢复、非法 resume 动作拒绝、API Key 不落盘和状态目录隔离测试。
+- 新增 Runtime 已完成结果重放和不确定执行拒绝测试，断言同一执行 ID 只启动一次子进程。
+- 110 项离线测试全部通过；使用假模型验证恢复流程，未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V9：受限 Runtime Evidence 与执行审批
+
+### 新增
+
+- 新增 `run_demo_case(case_id)`。它只能执行 `missing_user_id`、`schema_mismatch`、`connection_leak`、`documentation_required` 四个预登记案例，不接受任意命令、路径、参数或工作目录。
+- 新增 `full_runtime` Tool Profile；原有 `code_only`、`code_rag`、`full` 保持不变，普通 `--compare` 仍只运行三组静态工具对照。
+- 新增 `runtime_review` LangGraph 节点。交互模式在子进程启动前使用原生 `interrupt()` 暂停，允许批准、拒绝或取消，并从同一 Checkpoint 恢复。
+- 新增 Runtime Observation 来源和 `Evidence.runtime_id`。系统为每次真实运行生成 ID，Provenance Validator 要求最终证据的 ID 与绑定 Observation 完全一致。
+- 新增 `runtime_required` 评测案例和 `requires_runtime_evidence` 硬通过条件；静态猜对根因但没有真实 Runtime Evidence 仍判失败。
+- `RunMetrics` 与实验聚合新增 Runtime 请求、成功、超时、批准和拒绝次数。
+
+### 安全与成本
+
+- Runtime 默认由 `ENABLE_RUNTIME_TOOLS=false` 关闭；关闭时 Schema 在构图前被移除，模型无法请求该工具。
+- 交互运行需要“配置开启 + `full_runtime` Profile + 单次人工批准”；执行层仍会再次检查授权和 `MAX_RUNTIME_CALLS`，不能只靠 Prompt 约束。
+- 非交互 Evaluation 必须同时选择 `--profile full_runtime` 和 `--allow-runtime`；缺少显式授权时在模型调用前退出，不产生 API 费用或本地执行。
+- 子进程使用当前 Python、固定模块入口、固定仓库根目录、参数数组和 `shell=False`；只继承启动所需的最小环境变量，不继承 `API_KEY`；输出中的仓库绝对路径会脱敏，标准输出/错误截断为 4,000 字符，并受 `RUNTIME_TIMEOUT_SECONDS` 控制。
+- 默认每次调查最多执行 1 个 Runtime Case；标准对照不会把 Runtime 自动加入原来的实验矩阵。
+
+### 配置与兼容性
+
+- `api.env.example` 新增 `ENABLE_RUNTIME_TOOLS=false`、`MAX_RUNTIME_CALLS=1`、`RUNTIME_TIMEOUT_SECONDS=5`。旧 `api.env` 无需修改，缺省行为等同 V8.1.1，不会暴露或执行 Runtime 工具。
+- `run_agent()` 与 `run_agent_detailed()` 末尾新增可选参数 `allow_runtime_execution=False`，旧调用方式保持兼容。
+- Evaluation JSON 新增 Runtime Evidence 要求/数量和 Runtime 指标；旧 Case JSON 未提供 `requires_runtime_evidence` 时默认不要求。
+
+### 验证
+
+- 根据首轮真实 `runtime_required` 实验修复两处信息丢失：Runtime Observation 现在把异常类型、异常消息和项目内 traceback 帧放在长 stderr 之前；RAG 使用向量相似度与精确标识符覆盖率的混合得分，避免中文泛词把 `timeout_policy_violation`、`timeout_seconds` 对应供应商契约挤出 Top K。
+- 将直接暴露故障标准行为的 `test_demo_app.py` 和 `test_runtime_tools.py` 纳入 Agent 内部文件隔离，避免 Evaluation 被测试实现误导或泄题。
+- 新增工具白名单、任意参数拒绝、结构化超时、Runtime 审批/拒绝、系统 ID 来源绑定、Runtime 强制评分、精确契约召回和 Demo 测试隔离测试。
+- 103 项离线测试全部通过；测试只运行本地预登记故障夹具，未调用真实模型，未产生 API 费用。
+- 修复后的真实 `runtime_required + full_runtime` 验收通过 1/1：根因、代码、文档、引用、Evidence 与 Claim 均为 100%，Runtime 1/1 成功且 confirmed 假设提前收尾；模型调用 8 次、工具调用 10 次、总 Token 38,821。
+
+---
+
 ## V8.1.1：Evidence Preservation 与 Hypothesis Update Gate
 
 ### 修复

@@ -23,6 +23,9 @@ class AppConfig:
     max_tools_per_step: int = 3
     hitl_model_threshold: int = 5
     hitl_tool_threshold: int = 10
+    runtime_tools_enabled: bool = False
+    max_runtime_calls: int = 1
+    runtime_timeout_seconds: int = 5
 
 
 def _parse_bool(value: str, name: str) -> bool:
@@ -31,7 +34,7 @@ def _parse_bool(value: str, name: str) -> bool:
         return True
     if normalized in {"false", "0", "no", "off"}:
         return False
-    raise RuntimeError(f"{name} 必须是 auto、true 或 false。")
+    raise RuntimeError(f"{name} 必须是 true 或 false。")
 
 
 def resolve_capabilities(
@@ -96,4 +99,10 @@ def load_config(root: Path) -> AppConfig:
         max_tools_per_step=positive_int("MAX_TOOLS_PER_STEP", 3),
         hitl_model_threshold=positive_int("HITL_MODEL_CALL_THRESHOLD", 5),
         hitl_tool_threshold=positive_int("HITL_TOOL_CALL_THRESHOLD", 10),
+        runtime_tools_enabled=_parse_bool(
+            os.getenv("ENABLE_RUNTIME_TOOLS", "false"),
+            "ENABLE_RUNTIME_TOOLS",
+        ),
+        max_runtime_calls=positive_int("MAX_RUNTIME_CALLS", 1),
+        runtime_timeout_seconds=positive_int("RUNTIME_TIMEOUT_SECONDS", 5),
     )

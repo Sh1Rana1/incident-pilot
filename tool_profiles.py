@@ -1,21 +1,26 @@
-"""V7 工具 Profile：同时限制工具集合和可直接访问的数据范围。"""
+"""V9 工具 Profile：同时限制工具集合、运行能力和数据范围。"""
 
 from contextvars import ContextVar, Token
 from pathlib import PurePosixPath
 from typing import Literal, cast
 
 
-ToolProfileName = Literal["code_only", "code_rag", "full"]
+ToolProfileName = Literal["code_only", "code_rag", "full", "full_runtime"]
 
 CODE_TOOLS = frozenset({"list_files", "search_code", "read_file"})
 RAG_TOOLS = frozenset({"retrieve_docs"})
 GIT_TOOLS = frozenset({"git_status", "git_diff", "git_log"})
+RUNTIME_TOOLS = frozenset({"run_demo_case"})
 
 TOOL_PROFILES: dict[ToolProfileName, frozenset[str]] = {
     "code_only": CODE_TOOLS,
     "code_rag": CODE_TOOLS | RAG_TOOLS,
     "full": CODE_TOOLS | RAG_TOOLS | GIT_TOOLS,
+    "full_runtime": CODE_TOOLS | RAG_TOOLS | GIT_TOOLS | RUNTIME_TOOLS,
 }
+
+# 普通 --compare 仍保持原来的三组，避免无意增加真实模型和本地执行次数。
+STANDARD_EXPERIMENT_PROFILES = ("code_only", "code_rag", "full")
 
 # 文件工具在所有 Markdown 上必须绕经 retrieve_docs。下面的目录是当前 RAG
 # 确实建立索引的数据源；其他 Markdown 在实验 Profile 下不会直接暴露。

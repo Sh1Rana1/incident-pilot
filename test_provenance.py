@@ -54,6 +54,7 @@ class ProvenanceTests(unittest.TestCase):
         evidence = Evidence(
             evidence_id="E1", observation_id="obs-001", source_type="code",
             file="main.py", line_start=3, line_end=3, commit_hash=None,
+            runtime_id=None,
             description="未读取的行",
         )
 
@@ -74,6 +75,7 @@ class ProvenanceTests(unittest.TestCase):
         evidence = Evidence(
             evidence_id="E7", observation_id="obs-007", source_type="git",
             file="", line_start=None, line_end=None, commit_hash="61932b9",
+            runtime_id=None,
             description="Git 历史包含该提交",
         )
 

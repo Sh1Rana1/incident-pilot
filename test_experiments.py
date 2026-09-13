@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import tools  # noqa: F401：触发全部工具注册
+import runtime_tools  # noqa: F401：触发 V9 Runtime 工具注册
 from experiments import run_experiment, save_experiment
 from registry import registry
 from run_evals import enforce_experiment_cost_guard, format_summary
@@ -25,6 +26,8 @@ class ToolProfileTests(unittest.TestCase):
         self.assertIn("retrieve_docs", TOOL_PROFILES["code_rag"])
         self.assertNotIn("git_status", TOOL_PROFILES["code_rag"])
         self.assertIn("git_status", TOOL_PROFILES["full"])
+        self.assertNotIn("run_demo_case", TOOL_PROFILES["full"])
+        self.assertIn("run_demo_case", TOOL_PROFILES["full_runtime"])
 
     def test_schema_is_filtered_by_profile(self) -> None:
         allowed = resolve_tool_profile("code_only")[1]

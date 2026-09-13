@@ -1,4 +1,4 @@
-"""V8.1.1 统一数据模型：调查计划、验证轨迹、成本指标与证据链。"""
+"""V10.2 统一数据模型：会话、长期记忆、验证轨迹与证据链。"""
 
 from typing import Any, Literal, Optional
 
@@ -34,6 +34,7 @@ class ObservedSource(StrictModel):
     line_end: Optional[int] = None
     chunk_id: Optional[str] = None
     commit_hash: Optional[str] = None
+    runtime_id: Optional[str] = None
 
 
 class ToolObservation(StrictModel):
@@ -88,7 +89,9 @@ class HumanReviewRequest(StrictModel):
     model_call_count: int
     tool_call_count: int
     hypotheses: list[DiagnosticHypothesis] = Field(default_factory=list)
-    allowed_actions: list[Literal["continue", "summarize", "cancel"]]
+    allowed_actions: list[
+        Literal["continue", "summarize", "approve", "deny", "cancel"]
+    ]
 
 
 class Evidence(StrictModel):
@@ -101,6 +104,9 @@ class Evidence(StrictModel):
     line_start: Optional[int] = Field(description="证据起始行；不适用时填 null")
     line_end: Optional[int] = Field(description="证据结束行；不适用时填 null")
     commit_hash: Optional[str] = Field(description="Git 证据的提交哈希；不适用时填 null")
+    runtime_id: Optional[str] = Field(
+        description="Runtime 证据的系统运行编号；不适用时填 null",
+    )
     description: str = Field(description="这条证据说明了什么")
 
 
@@ -117,6 +123,32 @@ class IncidentReport(StrictModel):
     evidence: list[Evidence] = Field(description="支持结论的证据列表")
     suggested_fixes: list[str] = Field(description="建议的修复步骤")
     confidence: Literal["low", "medium", "high"]
+
+
+MemoryStatus = Literal["pending", "approved", "rejected"]
+
+
+class IncidentMemory(StrictModel):
+    """从已验证调查中提取的历史线索；它不是当前调查证据。"""
+
+    memory_id: str
+    source_thread_id: str
+    status: MemoryStatus
+    exception_types: list[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    summary: str
+    root_cause: str
+    resolution: list[str] = Field(default_factory=list)
+    source_confidence: Literal["medium", "high"]
+    created_at: str
+    updated_at: str
+    approved_at: Optional[str] = None
+
+
+class IncidentMemoryMatch(StrictModel):
+    memory: IncidentMemory
+    score: float = Field(ge=0.0)
 
 
 class RunMetrics(StrictModel):
@@ -148,6 +180,13 @@ class RunMetrics(StrictModel):
     unreferenced_successful_observation_count: int = Field(default=0)
     observation_utilization_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     post_confirmation_tool_call_count: int = Field(default=0)
+    runtime_call_count: int = Field(default=0)
+    successful_runtime_call_count: int = Field(default=0)
+    runtime_timeout_count: int = Field(default=0)
+    runtime_approval_count: int = Field(default=0)
+    runtime_denial_count: int = Field(default=0)
+    runtime_replay_count: int = Field(default=0)
+    recalled_memory_count: int = Field(default=0)
     tool_names: list[str] = Field(description="按请求顺序记录的工具名")
     stop_reason: str
     duration_ms: float

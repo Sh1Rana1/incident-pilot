@@ -1,6 +1,7 @@
-"""IncidentPilot V8.1.1 成本感知、证据保全、HITL 与来源验证图。"""
+"""IncidentPilot V10.2 假设驱动、历史线索、可恢复 Runtime 与来源验证图。"""
 
 import json
+import hashlib
 import operator
 from time import perf_counter
 from typing import Annotated, Optional
@@ -28,10 +29,17 @@ from models import (
     Evidence,
     HumanReviewRequest,
     IncidentReport,
+    ToolResult,
     ToolObservation,
 )
 from provenance import build_observation, validate_report_provenance
 from registry import registry
+from runtime_tools import (
+    activate_runtime_execution,
+    activate_runtime_timeout,
+    reset_runtime_execution,
+    reset_runtime_timeout,
+)
 import tools  # noqa: F401：导入时触发工具注册
 
 
@@ -43,14 +51,17 @@ SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的�
 只要上一轮产生了新的成功 Observation，下一轮必须先成功调用 update_hypotheses；完成更新前不要继续调用外部工具。
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
+当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围，再调用 run_demo_case；它只能运行预登记案例，不能接受 Shell 命令。
+run_demo_case 返回的 exception_message 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
 当某个假设已由至少两项独立来源确认时，应停止扩散调查并输出最终报告。
 不要猜测；不要声称看过没有读取的文件。
 每个工具结果的 meta.observation_id 是系统生成的真实来源编号。
 最终只能输出 JSON，字段必须是 summary、root_cause、claims、evidence、suggested_fixes、confidence。
 claims 每项包含 claim_id、statement、evidence_ids；每个 medium/high 结论都必须绑定证据。
 evidence 每项必须包含 evidence_id、observation_id、source_type、file、line_start、line_end、
-commit_hash、description。代码、文档和日志证据的文件与行号必须真实出现在对应 Observation；
+commit_hash、runtime_id、description。代码、文档和日志证据的文件与行号必须真实出现在对应 Observation；
 Git 提交证据填写 commit_hash，file 填空字符串，line_start/line_end 填 null。
+Runtime 证据填写 runtime_id，file 填空字符串，line_start/line_end 和 commit_hash 填 null。
 不要把无法确认的信息、目录、unknown、N/A 或自然语言说明伪装成文件证据。
 source_type 只能是 code、documentation、git、runtime、unknown；confidence 只能是
 low、medium、high。如果证据不足，只保留已验证的 Evidence，降低 confidence 并明确缺口。
@@ -92,6 +103,19 @@ class AgentState(TypedDict):
     context_compaction_count: int
     confirmed_at_tool_call_count: Optional[int]
     hypothesis_update_required: bool
+    runtime_tools_enabled: bool
+    runtime_execution_preapproved: bool
+    runtime_execution_decision: Optional[str]
+    runtime_call_count: int
+    successful_runtime_call_count: int
+    runtime_timeout_count: int
+    runtime_approval_count: int
+    runtime_denial_count: int
+    max_runtime_calls: int
+    runtime_replay_count: int
+    runtime_ledger_path: Optional[str]
+    thread_id: str
+    recalled_memory_count: int
 
 
 def response_format(config: AppConfig):
@@ -145,6 +169,18 @@ def _model_usage_update(state: AgentState, response) -> dict:
 def route_after_model(state: AgentState) -> str:
     last_message = state["messages"][-1]
     if last_message.get("tool_calls"):
+        requests_runtime = any(
+            call.get("function", {}).get("name") == "run_demo_case"
+            for call in last_message["tool_calls"]
+        )
+        if (
+            requests_runtime
+            and state.get("runtime_tools_enabled")
+            and state.get("human_review_enabled")
+            and not state.get("runtime_execution_preapproved")
+            and state.get("runtime_execution_decision") is None
+        ):
+            return "runtime_review"
         return "execute_tools"
     return "validate_report"
 
@@ -189,6 +225,12 @@ def route_after_human_review(state: AgentState) -> str:
     if state.get("force_synthesis"):
         return "synthesize_report"
     return "call_model"
+
+
+def route_after_runtime_review(state: AgentState) -> str:
+    if state.get("cancelled"):
+        return "build_cancelled"
+    return "execute_tools"
 
 
 def tool_call_signature(name: str, arguments: str) -> str:
@@ -237,7 +279,7 @@ def format_report_validation_error(exc: ValidationError) -> str:
 def build_agent_graph(
     client: OpenAI,
     config: AppConfig,
-    checkpointer: Optional[InMemorySaver] = None,
+    checkpointer=None,
     allowed_tools: frozenset[str] | set[str] | None = None,
     tool_profile: str | None = None,
 ):
@@ -303,6 +345,52 @@ def build_agent_graph(
             **_model_usage_update(state, response),
         }
 
+    def runtime_review(state: AgentState) -> dict:
+        """在任何运行时工具实际执行前，用 Checkpoint 暂停并取得单次授权。"""
+        case_ids: list[str] = []
+        for call in state["messages"][-1].get("tool_calls", []):
+            if call.get("function", {}).get("name") != "run_demo_case":
+                continue
+            try:
+                payload = json.loads(call["function"].get("arguments", "{}"))
+                case_ids.append(str(payload.get("case_id", "unknown")))
+            except (json.JSONDecodeError, TypeError):
+                case_ids.append("invalid")
+        request = HumanReviewRequest(
+            reason="runtime_execution",
+            message=(
+                "Agent 请求运行预登记故障案例："
+                + ", ".join(case_ids)
+                + "。本次授权只适用于当前工具调用，不允许任意命令。"
+            ),
+            model_call_count=state.get("model_call_count", 0),
+            tool_call_count=state.get("tool_call_count", 0),
+            hypotheses=[
+                DiagnosticHypothesis.model_validate(item)
+                for item in state.get("hypotheses", [])
+            ],
+            allowed_actions=["approve", "deny", "cancel"],
+        )
+        decision = interrupt(request.model_dump(mode="json"))
+        action = (
+            str(decision.get("action", "deny")).lower()
+            if isinstance(decision, dict)
+            else str(decision).lower()
+        )
+        if action not in {"approve", "deny", "cancel"}:
+            action = "deny"
+        return {
+            "runtime_execution_decision": action,
+            "runtime_approval_count": (
+                state.get("runtime_approval_count", 0) + int(action == "approve")
+            ),
+            "runtime_denial_count": (
+                state.get("runtime_denial_count", 0) + int(action == "deny")
+            ),
+            "human_review_count": state.get("human_review_count", 0) + 1,
+            "cancelled": action == "cancel",
+        }
+
     def execute_tools(state: AgentState) -> dict:
         tool_messages: list[dict] = []
         observations: list[dict] = []
@@ -328,6 +416,10 @@ def build_agent_graph(
         hypothesis_update_required = state.get("hypothesis_update_required", False)
         new_successful_observation = False
         protected_access_attempted = False
+        runtime_call_count = state.get("runtime_call_count", 0)
+        successful_runtime_call_count = state.get("successful_runtime_call_count", 0)
+        runtime_timeout_count = state.get("runtime_timeout_count", 0)
+        runtime_replay_count = state.get("runtime_replay_count", 0)
         for call_index, tool_call in enumerate(calls):
             function = tool_call["function"]
             name, arguments = function["name"], function["arguments"]
@@ -427,18 +519,63 @@ def build_agent_graph(
                 }, ensure_ascii=False)
                 print(f"跳过重复工具调用: {name}({arguments})")
             else:
-                print(f"调用工具: {name}({arguments})")
-                result = registry.execute(
-                    name,
-                    arguments,
-                    allowed_tools=allowed_tools,
-                    tool_profile=tool_profile,
-                )
-                print(f"工具结果: {result[:500]}")
-                if "属于评测或内部缓存目录" in result:
-                    protected_access_attempted = True
-                known_signatures.add(signature)
-                new_signatures.append(signature)
+                runtime_block_reason: str | None = None
+                if name == "run_demo_case":
+                    if state.get("runtime_execution_decision") == "deny":
+                        runtime_block_reason = "用户拒绝了本次运行时执行。"
+                    elif not (
+                        state.get("runtime_execution_preapproved")
+                        or state.get("runtime_execution_decision") == "approve"
+                    ):
+                        runtime_block_reason = "运行时工具尚未获得明确授权。"
+                    elif runtime_call_count >= state.get("max_runtime_calls", 1):
+                        runtime_block_reason = "运行时调用预算已经用完。"
+                if runtime_block_reason is not None:
+                    result = ToolResult.failure(
+                        runtime_block_reason,
+                        tool=name,
+                        reason="runtime_not_authorized",
+                    ).model_dump_json()
+                    print(f"跳过运行时工具: {name}({arguments})")
+                else:
+                    print(f"调用工具: {name}({arguments})")
+                    timeout_token = activate_runtime_timeout(
+                        config.runtime_timeout_seconds
+                    )
+                    execution_token = None
+                    if name == "run_demo_case" and state.get("runtime_ledger_path"):
+                        execution_id = hashlib.sha256(
+                            f"{state.get('thread_id', '')}:{tool_call['id']}".encode("utf-8")
+                        ).hexdigest()[:24]
+                        execution_token = activate_runtime_execution(
+                            execution_id,
+                            state["runtime_ledger_path"],
+                        )
+                    try:
+                        result = registry.execute(
+                            name,
+                            arguments,
+                            allowed_tools=allowed_tools,
+                            tool_profile=tool_profile,
+                        )
+                    finally:
+                        if execution_token is not None:
+                            reset_runtime_execution(execution_token)
+                        reset_runtime_timeout(timeout_token)
+                    print(f"工具结果: {result[:500]}")
+                    if name == "run_demo_case":
+                        runtime_call_count += 1
+                        runtime_payload = json.loads(result)
+                        if (runtime_payload.get("meta") or {}).get("replayed"):
+                            runtime_replay_count += 1
+                        if runtime_payload.get("ok"):
+                            successful_runtime_call_count += 1
+                        elif (runtime_payload.get("meta") or {}).get("timed_out"):
+                            runtime_timeout_count += 1
+                    if "属于评测或内部缓存目录" in result:
+                        protected_access_attempted = True
+                    known_signatures.add(signature)
+                    new_signatures.append(signature)
             duration_ms = (perf_counter() - started_at) * 1000
             observation, result = build_observation(
                 observation_id=observation_id,
@@ -510,6 +647,11 @@ def build_agent_graph(
             "hypothesis_update_required": (
                 hypothesis_update_required or new_successful_observation
             ),
+            "runtime_execution_decision": None,
+            "runtime_call_count": runtime_call_count,
+            "successful_runtime_call_count": successful_runtime_call_count,
+            "runtime_timeout_count": runtime_timeout_count,
+            "runtime_replay_count": runtime_replay_count,
         }
 
     def synthesize_report(state: AgentState) -> dict:
@@ -703,6 +845,7 @@ def build_agent_graph(
                     line_start=source.line_start,
                     line_end=source.line_end,
                     commit_hash=source.commit_hash,
+                    runtime_id=source.runtime_id,
                     description=f"{observation.tool_name} 已取得支持候选根因的真实来源。",
                 ))
         if best is not None and grounded_evidence:
@@ -751,6 +894,7 @@ def build_agent_graph(
 
     builder = StateGraph(AgentState)
     builder.add_node("call_model", call_model)
+    builder.add_node("runtime_review", runtime_review)
     builder.add_node("execute_tools", execute_tools)
     builder.add_node("synthesize_report", synthesize_report)
     builder.add_node("repair_report", repair_report)
@@ -761,8 +905,13 @@ def build_agent_graph(
     builder.add_edge(START, "call_model")
     builder.add_conditional_edges("call_model", route_after_model, {
         "execute_tools": "execute_tools",
+        "runtime_review": "runtime_review",
         "validate_report": "validate_report",
         "build_fallback": "build_fallback",
+    })
+    builder.add_conditional_edges("runtime_review", route_after_runtime_review, {
+        "execute_tools": "execute_tools",
+        "build_cancelled": "build_cancelled",
     })
     builder.add_conditional_edges("execute_tools", route_after_tools, {
         "call_model": "call_model",

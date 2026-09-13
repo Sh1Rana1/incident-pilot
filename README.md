@@ -1,6 +1,6 @@
-# IncidentPilot V8.1.1
+# IncidentPilot V10.2 Stable
 
-IncidentPilot 是一个面向 Python 项目的只读故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看当前工作区的代码、文档和 Git 信息，循环收集证据，最后输出结构化根因报告。
+IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看当前工作区的代码、文档和 Git 信息；它还可以在人工批准后运行预登记 Demo Case，取得真实 Runtime Evidence，最后输出结构化根因报告。系统使用 SQLite 保存可恢复会话和可审批长期事故记忆：新调查可以召回已批准的相似历史，但历史只是候选假设线索，不能冒充当前 Evidence。V10.2 是功能冻结后的稳定性版本，重点是减少人工操作、启动前自检和可重复安装，不增加新的 Agent 权限。
 
 当前版本的重点是：
 
@@ -8,7 +8,7 @@ IncidentPilot 是一个面向 Python 项目的只读故障诊断 Agent。用户�
 - 每次模型请求前压缩历史，只发送原始问题、当前假设和必要 Observation 摘要；
 - 总结和格式修复时切换到证据保全模式，重新纳入所有带真实来源的成功 Observation；
 - 每轮最多执行三个外部工具，阻止一次响应并发铺开大量低价值调查；
-- 使用统一注册器管理七个只读工具；
+- 使用统一注册器管理七个只读调查工具和一个受限运行时工具；
 - 使用内部 `update_hypotheses` 控制工具维护候选根因、支持证据和反证；
 - 使用结构化 `next_action` 明确下一工具、目的、支持条件和否定条件；
 - 新证据产生后强制先更新假设，未归类前禁止继续调用外部工具；
@@ -25,12 +25,21 @@ IncidentPilot 是一个面向 Python 项目的只读故障诊断 Agent。用户�
 - 保存结构化 Tool Observation 调查轨迹；
 - 使用 Claim—Evidence Ledger 将结论绑定到实际工具结果；
 - 验证代码行、RAG 片段和 Git 提交的真实来源；
+- 将每次 Runtime 复现绑定到系统生成的 `runtime_id`，并验证报告引用确实来自对应 Observation；
+- 对运行时能力实施“配置开关 + Profile 白名单 + 单次人工批准 + 执行层预算”四层控制；
+- 使用 SQLiteSaver 保存图状态，支持跨进程的 `new/list/show/resume` 调查生命周期；
+- 正常运行遇到 interrupt 时当场询问并自动恢复，只有退出终端或使用 `--detach` 才需要手工 `resume`；
+- 提供完全本地的 `doctor` 启动自检和已验证版本锁定文件；
+- 使用持久幂等账本保护 Runtime：已完成的同一执行只返回原结果，结果不确定时拒绝自动重跑；
+- 只从正常完成、中/高置信度、Claim 和 Evidence 完整的报告生成待审批 Memory；
+- 只召回 `approved` Memory，并在模型上下文中明确标记“不是当前证据”；
+- 使用无模型调用的本地可解释词法召回，可列出、搜索、批准、拒绝和删除记忆；
 - 统计上下文压缩、Observation 利用率和确认根因后的额外调用。
 - 将每次报告验证错误持久化到 Evaluation JSON，保留字段路径和具体原因。
 
-当前版本不会执行目标项目、修改代码或操作生产环境。模型能看到工具返回的代码和文档片段，因此使用第三方模型服务前，应确认项目内容允许发送给该服务商。
+当前版本不会执行模型生成的任意命令，不会修改代码或操作生产环境。它只能运行本仓库四个预登记 Demo Case；默认关闭，而且交互模式每次执行前都会暂停请求批准。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
 
-版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V8.1.1 的真实实现。
+版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V10.2 Stable 的真实实现。
 
 ## 1. 快速开始
 
@@ -48,6 +57,7 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 langgraph>=1.0.0,<2.0.0
+langgraph-checkpoint-sqlite>=3.0.0,<4.0.0
 ```
 
 ### 1.2 创建虚拟环境并安装依赖
@@ -57,6 +67,12 @@ langgraph>=1.0.0,<2.0.0
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+`requirements.txt` 保留兼容版本范围，适合日常升级；如果需要复现本次已经完整验证的稳定环境，使用：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
 ```
 
 后续命令直接使用 `.venv\Scripts\python.exe`，不要求激活虚拟环境，也可以避免误用系统中的另一个 Python。
@@ -91,6 +107,9 @@ MAX_TOOL_CALLS=20
 MAX_TOOLS_PER_STEP=3
 HITL_MODEL_CALL_THRESHOLD=5
 HITL_TOOL_CALL_THRESHOLD=10
+ENABLE_RUNTIME_TOOLS=false
+MAX_RUNTIME_CALLS=1
+RUNTIME_TIMEOUT_SECONDS=5
 ```
 
 字段含义：
@@ -107,6 +126,9 @@ HITL_TOOL_CALL_THRESHOLD=10
 | `MAX_TOOLS_PER_STEP` | 否 | 每个调查轮最多执行的外部工具数，默认 3，至少为 1 |
 | `HITL_MODEL_CALL_THRESHOLD` | 否 | 交互模式达到多少次模型调用后请求人工确认，默认 5 |
 | `HITL_TOOL_CALL_THRESHOLD` | 否 | 交互模式达到多少次工具调用后请求人工确认，默认 10 |
+| `ENABLE_RUNTIME_TOOLS` | 否 | 是否向交互式 Agent 暴露预登记 Runtime 工具，默认 `false` |
+| `MAX_RUNTIME_CALLS` | 否 | 一次调查最多实际执行多少个 Demo Case，默认 1 |
+| `RUNTIME_TIMEOUT_SECONDS` | 否 | 每次预登记案例的超时秒数，默认 5 |
 
 `OUTPUT_MODE=auto` 的当前策略：
 
@@ -155,6 +177,86 @@ OUTPUT_MODE=json_object
 
 `>` 和 `|` 是程序显示的提示符，不会发送给模型。单行问题也要再输入一个空行才会提交。输入 `exit` 或 `quit`，再输入空行，可以退出。
 
+默认 `ENABLE_RUNTIME_TOOLS=false`，所以启动方式不变、Agent 也看不到执行工具。要演示 Runtime 人工审批流程，把自己的 `api.env` 改为：
+
+```env
+ENABLE_RUNTIME_TOOLS=true
+MAX_RUNTIME_CALLS=1
+RUNTIME_TIMEOUT_SECONDS=5
+```
+
+重启 `main.py` 后可以提问：“请调查并实际复现 documentation_required，再给出根因。”当模型请求运行时，程序会在任何子进程启动前显示：
+
+```text
+=== 需要人工确认 ===
+选择 1批准本次运行 / 2拒绝本次运行 / 3取消调查：
+```
+
+选择 1 只批准当前预登记调用；选择 2 不执行但允许 Agent 根据静态证据继续；选择 3 取消本次调查。运行结束后建议将开关恢复为 `false`。
+
+### 1.5 V10.2 稳定持久化命令
+
+不带参数的 `main.py` 仍是原来的连续交互模式。如果要在退出程序后继续调查，使用持久化命令：
+
+```powershell
+# 0. 可选：检查 Python、依赖、api.env 和 SQLite；不会调用模型
+.\.venv\Scripts\python.exe main.py doctor
+
+# 1. 创建一次调查；遇到审批会当场询问并自动继续
+.\.venv\Scripts\python.exe main.py new
+
+# 2. 查看最近调查；这两个命令不会调用模型
+.\.venv\Scripts\python.exe main.py list
+.\.venv\Scripts\python.exe main.py show <调查ID>
+
+# 3. 对等待审批的调查做决定，然后从原图节点继续
+.\.venv\Scripts\python.exe main.py resume <调查ID>
+
+# 可选：希望遇到审批就保存退出，由其他时间或其他终端处理
+.\.venv\Scripts\python.exe main.py new --detach
+```
+
+`new` 遇到 Runtime 或费用审查时，Checkpoint 已经先同步写入 SQLite，然后 CLI 当场显示审批问题；用户选择后，程序在内部调用 `Command(resume=...)`，不需要复制调查 ID。恢复后若再次出现审批，会在同一终端继续询问。只有按 `Ctrl+C`、输入流结束或主动使用 `--detach` 时才需要稍后运行 `resume`。数据保存在 `.incident_state/incident_pilot.sqlite3`，该目录被 Git 和 Agent 文件工具同时忽略。
+
+### 1.6 长期事故记忆命令
+
+持久化调查只有在 `stop_reason=completed`、置信度为 medium/high，且报告同时存在 Claim 和 Evidence 时，才会生成 `pending` 记忆。候选不会自动影响新调查：
+
+```powershell
+# 查看待审批记忆
+.venv\Scripts\python.exe main.py memory list --status pending
+
+# 批准后才可被新调查召回
+.venv\Scripts\python.exe main.py memory approve <memory_id>
+
+# 拒绝候选
+.venv\Scripts\python.exe main.py memory reject <memory_id>
+
+# 不调用模型，本地搜索已批准记忆
+.venv\Scripts\python.exe main.py memory search KeyError user_id
+
+# 永久删除一条记忆
+.venv\Scripts\python.exe main.py memory forget <memory_id>
+```
+
+`memory list/search/approve/reject/forget` 都只操作本地 SQLite，不调用模型，不产生 Token 费用。
+
+### 1.7 启动自检与稳定依赖
+
+`doctor` 是一个完全本地的快速检查：验证 Python 至少为 3.10、五个直接依赖已经安装、`api.env` 能通过格式校验，以及 SQLite 状态库能够打开和自动迁移。它只显示模型名、输出模式和 Runtime 开关，绝不会打印 API Key，也不会创建模型客户端或访问网络。
+
+```powershell
+.\.venv\Scripts\python.exe main.py doctor
+```
+
+如果依赖缺失到 `main.py` 无法导入，例如再次出现 `No module named 'langgraph'`，可以直接运行只有标准库依赖的入口：
+
+```powershell
+.\.venv\Scripts\python.exe doctor.py
+```
+
+命令成功时退出码为 0，任一检查失败时退出码为 1，方便用户和自动化脚本可靠判断结果。缺少第三方包时，`doctor.py` 仍会列出全部缺失依赖、基础检查 `api.env` 和 SQLite，而不是跟随主程序一起导入失败。`requirements.lock` 记录 V10.2 完整测试实际使用的直接依赖版本；它不是说其他兼容版本一定不能运行，而是提供一个出现依赖差异时可回退的可重复基线。
+
 ## 2. 当前能力与边界
 
 ### 2.1 能做什么
@@ -167,6 +269,8 @@ IncidentPilot 可以：
 - 查看有限深度的项目目录；
 - 检索本地 Markdown 知识库；
 - 查看 Git 状态、未提交差异和最近提交；
+- 在显式启用并由用户逐次批准后，复现四个预登记 Demo Case；
+- 保存退出码、标准输出/错误、异常类型和不可伪造的系统 `runtime_id`；
 - 多轮调用工具并保留观察结果；
 - 显式维护可证伪候选假设、支持 Observation、反证和下一步动作；
 - 将下一步动作约束为一个工具、调查目的、支持条件和否定条件；
@@ -178,26 +282,32 @@ IncidentPilot 可以：
 - 在调查预算耗尽时根据已有证据强制总结；
 - 在费用阈值、受保护路径或冲突假设处暂停，由用户选择继续、总结或取消；
 - 使用 Checkpoint 从同一人工中断点恢复；
+- 将 Checkpoint 和会话索引写入 SQLite，退出后仍可按调查 ID 恢复；
+- 列出过往调查、查看等待原因、失败信息或最终报告；
+- 从已落地 Evidence 的成功报告中确定性提取历史事故候选；
+- 由用户批准、拒绝或删除记忆，并在新调查前召回最多 3 条相似历史；
+- 记录每次调查实际召回的 Memory ID 和召回数；
 - 统计 Token、上下文压缩、Observation 利用率、早停、人工确认、格式修复和受保护路径尝试；
 - 为每次工具调用保存参数、来源、摘要哈希和耗时；
 - 输出根因、Claim—Evidence Ledger、修复建议和置信度；
 - 拒绝未读取文件、越界行号、伪造 Observation 和虚假 Git 提交；
 - 接受纯 JSON、JSON 代码块和前后带少量说明的合法报告，并记录历次验证错误；
-- 批量评测六个故障诊断案例；
+- 批量评测七个故障诊断案例，其中一个强制要求 Runtime Evidence；
 - 比较不同工具组合并统计多次运行稳定性。
 
 ### 2.2 不能做什么
 
 当前版本不会：
 
-- 执行 Agent 自己提出的任意命令；
-- 自动运行用户项目复现故障；
+- 执行 Agent 自己提出的任意 Shell 命令、参数或路径；
+- 运行预登记列表之外的用户项目入口；
 - 修改、删除或创建业务代码；
 - 自动应用修复补丁；
 - 自动运行修复后的测试；
 - 连接生产数据库或生产环境；
-- 跨进程持久化 LangGraph Checkpoint；
-- 对任意外部项目动态切换调查根目录。
+- 对任意外部项目动态切换调查根目录；
+- 将本地 SQLite 会话在多台机器间共享；
+- 将历史记忆当作当前事故的 Evidence，或仅凭历史记忆生成高置信度结论；
 
 文件工具的根目录固定为 IncidentPilot 当前仓库。因此现阶段主要用于调查本仓库中的 `demo_app` 和项目自身代码。支持任意目标仓库需要后续增加经过验证的 workspace 参数和更严格的隔离。
 
@@ -207,8 +317,13 @@ IncidentPilot 可以：
 incident-pilot/
 ├── api.env.example             # API 配置模板
 ├── requirements.txt            # Python 依赖
-├── main.py                     # 多行命令行入口与报告展示
+├── requirements.lock           # V10.2 完整测试通过的直接依赖版本
+├── main.py                     # 传统交互、持久化调查、自检和 Memory 命令
+├── doctor.py                   # Python、依赖、api.env 与 SQLite 本地自检
 ├── agent.py                    # Agent 公共接口、图调用与运行指标
+├── session_agent.py            # 持久化调查的启动、恢复和结果组装
+├── session_store.py            # SQLiteSaver、会话索引与状态转换
+├── memory.py                   # 候选提取、相似度排序与安全 Memory 上下文
 ├── graph.py                    # LangGraph 状态、节点、路由和收尾逻辑
 ├── context_manager.py          # 发给模型的调查上下文选择与压缩
 ├── models.py                   # Pydantic 工具、报告和指标模型
@@ -220,6 +335,8 @@ incident-pilot/
 ├── knowledge_tools.py          # retrieve_docs 工具
 ├── retrieval.py               # 本地 Markdown RAG
 ├── git_tools.py               # 三个只读 Git 工具
+├── runtime_tools.py           # 预登记 Demo 执行、超时和 Runtime ID
+├── .incident_state/           # Checkpoint/会话/Runtime 账本（自动生成）
 ├── tool_profiles.py            # Profile 工具白名单与文档路径隔离
 ├── evaluation.py              # 单案例确定性评分
 ├── experiments.py             # Profile、Case、重复运行与统计聚合
@@ -238,12 +355,16 @@ incident-pilot/
 ├── test_agent.py
 ├── test_context_manager.py
 ├── test_demo_app.py
+├── test_doctor.py              # 不联网启动自检与密钥隐藏测试
 ├── test_evaluation.py
 ├── test_experiments.py
 ├── test_graph.py
 ├── test_hypotheses.py
 ├── test_main.py
+├── test_memory.py             # 候选门槛、审批、召回、删除和证据隔离
+├── test_sessions.py           # 重开、恢复和密钥隔离测试
 ├── test_provenance.py
+├── test_runtime_tools.py
 ├── test_tools.py
 ├── README.md                   # 当前版本完整说明
 └── CHANGELOG.md                # 版本演进记录
@@ -254,16 +375,21 @@ incident-pilot/
 ```text
 .incident_cache/rag_index.json  # RAG 索引缓存
 .incident_reports/*.json        # Evaluation 与实验报告
+.incident_state/incident_pilot.sqlite3  # 持久化图状态、会话、Runtime 账本和长期记忆
 ```
 
-两个目录都被 Git 忽略，也不会暴露给 Agent 工具。
+三个目录都被 Git 忽略，也不会暴露给 Agent 工具。
 
 ## 4. 从输入到报告的完整数据流
+
+V10.2 有两个外层入口：`run_agent()` 使用内存 Checkpoint，适合兼容原调用方；`main.py new/resume` 使用 SQLite Checkpoint 和长期 Memory，适合日常完整调查。两者共用同一张 LangGraph，不存在两套诊断逻辑。持久化入口默认在当前终端处理审批并自动恢复；兼容入口不读写长期记忆，避免旧 API 在无感知情况下改变行为。
 
 ```text
 main.py 收集一段完整多行输入
         ↓
-run_agent(question)
+run_agent(question) 或 start_session(question)
+        ↓（仅持久化模式）
+召回最多 3 条 approved Incident Memory，注入“非证据”历史线索
         ↓
 agent.py 加载 api.env、解析 Tool Profile、创建模型客户端
         ↓
@@ -275,7 +401,7 @@ call_model
         │       ├── 保留全部假设引用的 Observation
         │       └── 仅补充最近 4 条尚未引用的 Observation
         ├── update_hypotheses → 校验并替换当前完整假设集合
-        ├── 外部 tool_calls → execute_tools
+        ├── 普通 tool_calls → execute_tools
         │                       ├── 执行只读工具并生成 obs-xxx
         │                       ├── 提取文件、行号、Chunk 或 Commit
         │                       ├── 更新假设支持与反证
@@ -287,6 +413,10 @@ call_model
         │                                  │                              └── cancel → 取消
         │                                  ├── 硬预算耗尽 → 强制总结
         │                                  └── 仍需调查 → call_model
+        ├── run_demo_case → runtime_review
+        │                   ├── approve → execute_tools → 受限子进程 → Runtime Observation
+        │                   ├── deny → 不执行，生成失败 Observation 后继续
+        │                   └── cancel → build_cancelled → END
         │
         └── 返回报告文本 → Pydantic + Provenance 验证
                                 ├── Schema、Claim 和来源全部合法 → END
@@ -299,9 +429,13 @@ call_model
 IncidentReport
         ↓
 main.py 格式化为人类可读文本
+        ↓（仅 completed + medium/high + Claim/Evidence 完整）
+生成 pending Incident Memory 候选，等待用户 approve/reject
 ```
 
-模型本身不能直接读取磁盘。模型只能选择注册过的工具，真正的文件、RAG 和 Git 操作由本地 Python 函数执行。工具结果先进入完整 LangGraph 状态并生成系统控制的 Observation；下一次请求不再重发整段 Assistant/Tool 消息，而是发送压缩调查记忆。这样避免悬空的 `tool_call_id`，也避免早期大段工具输出在之后每一轮重复计费。普通调查保留假设引用和最近结果；最终总结、修复则保留所有具有真实来源的成功结果。完整消息、Observation 和假设仍在 Checkpoint 中，可用于验证和审计。
+模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具，真正的文件、RAG、Git 和受限 Demo 执行由本地 Python 函数完成。Runtime 调用先经过配置、Profile、人工授权和次数预算，执行函数再使用固定的 Python 模块入口、固定项目目录、无 Shell 的参数数组和超时。工具结果先进入完整 LangGraph 状态并生成系统控制的 Observation；下一次请求不再重发整段 Assistant/Tool 消息，而是发送压缩调查记忆。这样避免悬空的 `tool_call_id`，也避免早期大段工具输出在之后每一轮重复计费。普通调查保留假设引用和最近结果；最终总结、修复则保留所有具有真实来源的成功结果。完整消息、Observation 和假设仍在 Checkpoint 中，可用于验证和审计。
+
+在持久化模式中，LangGraph 每个超步的状态和 `interrupt()` 待续工作由 `SqliteSaver` 同步写盘。`incident_sessions` 表只是面向 CLI 的索引，保存问题、状态、审批请求和最终结果；图的真正恢复仍由 LangGraph Checkpoint 完成。`resume` 用同一 `thread_id` 和 `Command(resume=...)` 继续，不会把旧问题重新发给一个新 Agent。
 
 ## 5. LangGraph 控制流
 
@@ -336,10 +470,18 @@ main.py 格式化为人类可读文本
 | `evidence_sufficient / early_stopped` | 是否满足确定性证据充分度并提前收尾 |
 | `human_review_*` | 是否启用 HITL、触发原因、次数和是否已经处理 |
 | `cancelled` | 用户是否在人工决策点取消调查 |
+| `runtime_tools_enabled` | 本次运行是否真正暴露 Runtime Schema |
+| `runtime_execution_preapproved / runtime_execution_decision` | Evaluation 预授权或交互式单次审批结果 |
+| `runtime_call_count / max_runtime_calls` | 已实际执行次数与硬预算 |
+| `successful_runtime_call_count / runtime_timeout_count` | 成功复现与超时统计 |
+| `runtime_approval_count / runtime_denial_count` | 交互式批准和拒绝次数 |
+| `runtime_replay_count` | 命中已完成幂等账本、直接复用旧结果的次数 |
+| `runtime_ledger_path / thread_id` | 持久化模式中的账本位置和稳定会话 ID |
+| `recalled_memory_count` | 本次持久化调查实际注入的 approved 历史记忆数量；兼容入口固定为 0 |
 
-`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。V8.1.1 的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
+`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。V10.2 的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
 
-每次 `run_agent()` 默认生成新的 UUID 作为 thread ID，避免不同问题共享状态。当前 Checkpointer 是 `InMemorySaver`，人工暂停与 `Command(resume=...)` 能在同一 Python 进程内恢复；关闭进程后状态仍会消失。
+每次调查默认生成新 UUID 作为 thread ID，避免不同问题共享状态。兼容函数 `run_agent()` 仍使用 `InMemorySaver`；V10.2 CLI 则使用 `SqliteSaver`，因此关闭原 Python 进程后仍能用相同 thread ID 恢复。这种双入口设计保留旧 API，同时让新 CLI 获得持久性和经过审批的长期记忆。
 
 ### 5.2 节点
 
@@ -354,6 +496,45 @@ main.py 格式化为人类可读文本
 外部工具按名称进入注册器，使用 Pydantic 校验参数并执行。每个外部调用生成唯一 `obs-xxx`，记录参数、状态、来源、摘要哈希和耗时。内部 `update_hypotheses` 不访问工作区，也不生成可用于 Evidence 的 Observation；它只能引用已经存在且成功的 Observation，并用完整集合替换图中的假设状态。已有假设时，只要一轮生成新成功 Observation，`hypothesis_update_required` 就会开启；下一轮在假设更新成功前提出的外部调用会收到 `hypothesis_update_required`，不会实际执行。
 
 工具硬预算在执行层再次检查。超过 `MAX_TOOL_CALLS` 的请求不会执行，并收到 `tool_budget_exhausted`，随后图进入总结，不能靠一次并行请求绕过预算。同一轮超过 `MAX_TOOLS_PER_STEP` 的调用收到 `per_step_tool_limit`，但不会立刻强制总结；模型下一轮可以根据已有结果重新排序，只选择信息价值最高的动作。
+
+#### `runtime_review`
+
+只有最后一条模型消息请求 `run_demo_case`、Runtime 已启用、交互式 HITL 已开启且本次没有预授权时才进入。节点调用 LangGraph `interrupt()`，把案例 ID、当前模型/工具计数和候选假设写入 Checkpoint，然后等待 `approve`、`deny` 或 `cancel`。批准只覆盖当前这批工具请求；拒绝不会启动进程，执行节点会生成一条可审计的失败 Observation；取消则直接生成取消报告。
+
+Evaluation 没有人工输入循环，所以必须由操作者同时选择 `full_runtime` 并添加 `--allow-runtime`。该标志会作为本次评测的明确预授权，不会修改 `api.env`。
+
+#### `SessionStore` 与跨进程恢复
+
+`session_store.py` 在同一 SQLite 文件中管理四类数据：
+
+1. LangGraph 自己的 Checkpoint 表，保存节点状态、下一节点和 interrupt 的待续工作；
+2. `incident_sessions` 表，保存 CLI 需要展示的调查索引；
+3. `runtime_executions` 表，保存执行型工具的幂等账本；
+4. `incident_memories` 表，保存待审批、已批准或已拒绝的长期事故记忆。
+
+会话状态只能是 `running`、`waiting_for_runtime_approval`、`waiting_for_human_review`、`completed`、`cancelled` 或 `failed`。`start_session()` 先建立会话索引，再以 `durability="sync"` 运行图；遇到 interrupt 就保存审批请求。`resume_session()` 只接受当前审批点允许的动作，然后用 `Command(resume=...)` 恢复。V10.2 的 CLI 在外层循环检查 `pending_review`：正常情况下当场读取用户选择并自动调用 `resume_session()`，如果恢复后再次暂停就继续询问；`Ctrl+C`、EOF 和 `--detach` 只结束 CLI，不删除已经同步保存的状态。
+
+Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态导入自定义模块。这样不会因读取被篡改的本地状态而任意实例化 Python 类。`api.env` 和 API Key 不进入 AgentState、会话表或 Runtime 账本；恢复时重新从环境加载客户端配置。
+
+#### Incident Memory 生命周期
+
+系统将“同一次调查内的上下文”和“跨调查长期记忆”明确分开。一次持久化调查正常结束后，系统先做确定性门控：只有 `stop_reason=completed`、报告为 medium/high 置信度、至少存在一条 Claim 和一条 Evidence，而且每条 Claim 引用的 Evidence ID 都真实存在，才提取一条 `pending` 候选。低置信度、取消、失败、无证据或引用断裂的报告不会沉淀。
+
+候选记录异常类型、关键符号、来源文件、根因摘要、解决建议和源调查 ID。它不会自动参与后续调查；用户必须使用 `memory approve` 将状态改为 `approved`，也可以 `reject` 保留审计记录或用 `forget` 永久删除。每个源调查最多生成一条候选，重复完成同一会话不会制造重复记忆。
+
+创建新持久化调查时，系统在本机对 approved 记忆做确定性词法排序：比较异常类型、标识符、英文词和中文二元词组，并给予异常类型或关键符号精确命中额外权重，最多返回 3 条。排序不调用模型、不建立向量索引，因此搜索过程可解释且没有额外 Token 成本。
+
+召回结果只追加到 System 上下文中的“历史候选假设”区域，并带有明确约束：它不是本次 Observation，不能直接成为 Evidence 或 Claim 的来源，也不能单独提升置信度。`Evidence.source_type` 的类型定义根本不接受 `memory`；模型仍必须用当前代码、RAG、Git 或 Runtime 工具重新验证。这样既能利用过去经验缩短调查路径，又避免错误记忆污染证据链。
+
+#### Runtime 幂等账本
+
+持久化模式为每个 Runtime tool call 计算稳定 `execution_id = SHA256(thread_id + tool_call_id)`。执行前使用 SQLite `BEGIN IMMEDIATE` 原子领取执行权：
+
+- 没有记录：写入 `running`，然后真正执行；
+- 已是 `completed`：返回上次的结构化结果，不启动第二个子进程；
+- 仍是 `running`：说明上次可能在执行后、记录结果前崩溃。系统无法证明副作用没发生，因此拒绝自动重跑。
+
+这是“安全的 at-most-once 倾向”，不是数学上无条件 exactly-once。外部进程和 SQLite 无法共享一个原子事务；当成功结果不确定时，宁可让人介入，也不猜测并重复执行。
 
 #### `human_review`
 
@@ -391,12 +572,12 @@ main.py 格式化为人类可读文本
 max_steps = 8
 ```
 
-它控制允许使用工具的调查轮数。除此以外，V8.1.1 还分别限制总模型调用、总工具调用和单轮工具调用；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
+它控制允许使用工具的调查轮数。除此以外，V10.2 还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
 
 LangGraph 框架保险为：
 
 ```python
-recursion_limit = max_steps * 3 + 5
+recursion_limit = max_steps * 4 + 8
 ```
 
 它限制节点跳转总数，防止图结构异常循环。两者统计对象不同，不能互相替代。
@@ -418,7 +599,7 @@ JSON 参数会按键名排序，因此以下调用被视为相同：
 
 完全相同的调用不会再次执行，而是返回 `duplicate_tool_call`。第一次重复后，模型还有一轮机会使用已有结果、改查其他证据或直接输出报告；同一次调查中第二次重复才触发强制总结。语义相似但参数不同的调用目前不会被识别，例如搜索 `user_id` 和搜索 `missing user_id` 仍被视为两次不同调查。
 
-## 6. 工具注册与七个只读工具
+## 6. 工具注册与八个受控工具
 
 ### 6.1 ToolRegistry
 
@@ -484,6 +665,21 @@ score
 | `git_log(limit)` | 查看最近 1–20 条提交的哈希、作者、时间和标题 |
 
 Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，输出最多 20,000 字符。它们不会执行提交、重置、切换分支或修改工作区。
+
+### 6.5 Runtime 工具
+
+`run_demo_case(case_id)` 是唯一会启动子进程的 Agent 工具，`case_id` 只能是：
+
+```text
+missing_user_id
+schema_mismatch
+connection_leak
+documentation_required
+```
+
+参数模型不包含 `command`、`args`、`path` 或工作目录，所以模型没有表达任意执行的通道。实现固定调用当前解释器的 `-m demo_app.run_case <case_id>`，使用参数数组和 `shell=False`，工作目录固定为仓库根目录，子进程只继承启动所需的最小环境变量而不继承 `API_KEY`。输出中的仓库绝对路径会脱敏，最多保留 4,000 字符，并由 `RUNTIME_TIMEOUT_SECONDS` 强制超时。非零退出码代表“故障被成功复现”，工具本身仍返回成功结果；真正的超时或启动错误才是工具失败。
+
+每次完成的运行由本地系统生成 `runtime-<case>-<随机值>`。这个 `runtime_id` 被写入 Observation 来源；最终 `source_type=runtime` 的 Evidence 必须引用同一个 Observation 和同一个 Runtime ID，模型自己编造的 ID 无法通过 Provenance Validator。
 
 ## 7. 本地 RAG 原理
 
@@ -685,6 +881,7 @@ expected_exception
 root_cause_keywords
 evidence_files
 relevant_docs
+requires_runtime_evidence
 ```
 
 只有 `question` 发送给 Agent，其他字段由评测器保存并用于评分。`evals/`、评测实现和对应测试均对 Agent 隔离；`git_diff` 必须指定单个现有代码文件，不能再用点号读取整个工作区并绕过隔离。
@@ -700,7 +897,8 @@ relevant_docs
 - 引用文件与行号有效率；
 - Evidence Observation 落地率；
 - Claim 证据覆盖率；
-- Provenance 违规数量。
+- Provenance 违规数量；
+- 是否满足 Case 明确要求的 Runtime Evidence。
 
 当前硬通过条件是：
 
@@ -711,14 +909,15 @@ relevant_docs
 并且 Evidence Observation 落地率 = 100%
 并且 Claim 证据覆盖率 = 100%
 并且 Provenance 违规数 = 0
+并且（若 requires_runtime_evidence=true）至少有一条已落地 Runtime Evidence
 并且 stop_reason = completed
 ```
 
-根因关键词在 `summary + root_cause + claims[].statement` 中匹配。V8 延续 Claim 作为经过 Evidence 绑定的正式诊断结论，因此其中的精确配置值计入根因评分；修复建议和证据描述仍不参与，避免模型在非结论区域堆关键词。文档命中、异常类型和模型置信度是观察指标，不是硬门槛。
+根因关键词在 `summary + root_cause + claims[].statement` 中匹配。Claim 是经过 Evidence 绑定的正式诊断结论，因此其中的精确配置值计入根因评分；修复建议和证据描述仍不参与，避免模型在非结论区域堆关键词。文档命中、异常类型和模型置信度是观察指标，不是硬门槛。
 
 相关文档只有在对应 Evidence 绑定到真实 `retrieve_docs` Observation，并且该 Observation 确实返回了目标文档片段时才计分。仅调用一次 RAG 或猜中文档路径都不算命中。数值型根因标准使用带单位的短语，例如 `10 秒`，避免代码中的“第 10 行”被误判为正确阈值。
 
-引用验证同时检查本地物理位置和本次工具 Observation：文件不仅要存在，模型还必须真正读取过对应行；Git 提交则必须真实出现在绑定的 `git_log` 结果中。
+引用验证同时检查本地物理位置和本次工具 Observation：文件不仅要存在，模型还必须真正读取过对应行；Git 提交必须真实出现在绑定的 `git_log` 结果中；Runtime ID 必须来自绑定的 `run_demo_case` Observation。
 
 ### 10.3 运行指标
 
@@ -756,25 +955,32 @@ AgentRunResult
 | `unreferenced_successful_observation_count` | 运行结束时既未被假设也未被最终报告使用的成功 Observation 数 |
 | `observation_utilization_rate` | 被假设或最终 Evidence 使用的成功 Observation 比例；无成功 Observation 时为 1 |
 | `post_confirmation_tool_call_count` | 首次形成 confirmed 假设后仍提出的工具调用数 |
+| `runtime_call_count / successful_runtime_call_count` | 实际执行的 Runtime 次数和成功取得结果的次数 |
+| `runtime_timeout_count` | 因超时终止的 Runtime 次数 |
+| `runtime_approval_count / runtime_denial_count` | 交互式 Runtime 批准和拒绝次数 |
+| `recalled_memory_count` | 本次调查实际召回并注入的 approved Incident Memory 数量 |
 | `tool_names` | 按请求顺序记录的工具名 |
 | `stop_reason` | 图结束原因 |
 | `duration_ms` | `app.invoke()` 的墙钟耗时 |
 
 普通 `run_agent()` 仍然只返回 `IncidentReport`，保持现有调用方兼容。
 
-## 11. V8.1.1 工具消融、上下文效率、成本与稳定性实验
+## 11. V10.2 工具消融、Runtime Evidence、成本与稳定性实验
 
-### 11.1 三种 Profile
+### 11.1 四种 Profile
 
 | Profile | 可用工具 | 实验目的 |
 |---|---|---|
 | `code_only` | 三个文件工具；不能直接看到 RAG 文档 | 验证只看代码和日志是否足够 |
 | `code_rag` | 文件工具 + RAG；文档只能经 RAG 获取 | 测量项目文档的贡献 |
 | `full` | 文件工具 + RAG + Git；文档只能经 RAG 获取 | 测量 Git 上下文的额外贡献 |
+| `full_runtime` | `full` + 预登记 Runtime 工具 | 调查需要真实复现证据的案例 |
 
-Profile 使用三层限制：模型只收到允许的工具 Schema，执行节点拒绝白名单外调用，文件工具再实施路径级隔离。启用任一 Profile 后，所有 Markdown 都不会出现在 `list_files` 和 `search_code` 结果中，`read_file` 也会拒绝直接读取；`code_rag` 和 `full` 必须调用 `retrieve_docs` 获取已建立索引的 `knowledge/` 与 `demo_app/docs/` 文档。`demo_app/fixtures/` 对所有 Agent Profile 都不可见。普通命令行默认使用 `full`。
+Profile 使用三层基础限制：模型只收到允许的工具 Schema，执行节点拒绝白名单外调用，文件工具再实施路径级隔离。启用任一 Profile 后，所有 Markdown 都不会出现在 `list_files` 和 `search_code` 结果中，`read_file` 也会拒绝直接读取；RAG Profile 必须调用 `retrieve_docs` 获取已建立索引的 `knowledge/` 与 `demo_app/docs/` 文档。`demo_app/fixtures/` 对所有 Agent Profile 都不可见。
 
-### 11.2 六个案例的分工
+交互式命令行选择 `full_runtime`，但 `ENABLE_RUNTIME_TOOLS=false` 时会在构图前移除 Runtime Schema，此时实际能力等同 `full`。开启后仍需要每次人工批准。普通 `--compare` 有意只比较 `code_only`、`code_rag`、`full`，不会悄悄增加可执行实验。
+
+### 11.2 七个案例的分工
 
 | Case | 主要目的 |
 |---|---|
@@ -784,18 +990,32 @@ Profile 使用三层限制：模型只收到允许的工具 Schema，执行节�
 | `documentation_required` | 没有供应商文档就无法知道准确的 10 秒约束 |
 | `git_regression` | 要求通过 Git 历史给出引入缺陷的提交 `61932b9` |
 | `misleading_documentation` | 检查 Agent 能否识别已废弃的扩容建议并坚持代码证据 |
+| `runtime_required` | 明确要求实际复现，并以 Runtime ID 证明运行确实发生 |
 
-后三个是专门拉开工具能力差异的案例。`git_regression` 依赖本仓库现有 Git 历史；如果导出项目时丢失 `.git`，该案例中的 Git 组也无法取得标准提交哈希。
+`documentation_required`、`git_regression`、`misleading_documentation` 和 `runtime_required` 是专门拉开工具能力差异的案例。`git_regression` 依赖本仓库现有 Git 历史；如果导出项目时丢失 `.git`，该案例中的 Git 组也无法取得标准提交哈希。`runtime_required` 在没有已落地 Runtime Evidence 时必定失败，不能靠静态代码猜测通过。
 
 ### 11.3 运行实验
 
-默认组合仍是全部六个 Case、`full` Profile、每个一次，但 V8.1.1 的费用保护会在真正调用模型前阻止超过 3 次且没有显式确认的实验：
+默认组合是全部七个 Case、`full` Profile、每个一次，但费用保护会在真正调用模型前阻止超过 3 次且没有显式确认的实验：
 
 ```powershell
 .\.venv\Scripts\python.exe run_evals.py
 ```
 
-上面的命令会显示 6 次调查并安全退出。日常请用 `--case` 缩小范围；只有确认费用后才追加 `--yes`。
+上面的命令会显示 7 次调查并安全退出。日常请用 `--case` 缩小范围；只有确认费用后才追加 `--yes`。
+
+最低成本的 Runtime 专项评测只有一次真实 Agent 调查，并且必须显式声明本次允许执行预登记案例：
+
+```powershell
+.\.venv\Scripts\python.exe run_evals.py `
+  --case runtime_required `
+  --profile full_runtime `
+  --allow-runtime
+```
+
+`--allow-runtime` 同时负责暴露工具和为这次非交互评测预授权。没有该参数时，选择 `full_runtime` 会在调用模型前直接退出；其他 Profile 即使误加该参数也没有 Runtime Schema。
+
+2026-09-13 的 V9 单案例验收基线为：`runtime_required + full_runtime` 通过 1/1，根因、代码、文档、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规为 0；Runtime 1/1 成功、超时 0，confirmed 假设触发早停，模型调用 8 次、工具调用 10 次、总 Token 38,821。该数字来自当次所用模型与服务商，只用于回归参考，不代表其他模型必然得到相同成本。
 
 最低成本的三组烟雾对照：
 
@@ -829,9 +1049,9 @@ Profile 使用三层限制：模型只收到允许的工具 Schema，执行节�
 .\.venv\Scripts\python.exe run_evals.py --compare --runs 3 --yes
 ```
 
-三种 Profile × 六个 Case × 三次等于 54 次 Agent 调查；每次调查内部又可能请求模型多次。建议先运行三次烟雾对照，再选择三个区分度案例做九次对照，最后根据费用决定是否运行全部 54 次稳定性实验。
+标准三种 Profile × 七个 Case × 三次等于 63 次 Agent 调查；每次调查内部又可能请求模型多次。不要把全量矩阵当作烟雾测试：先跑一个静态案例的三组对照，再单独跑一次 Runtime Case，最后才按研究需要增加重复次数。
 
-推荐的 V8.1.1 区分度对照有 9 次，必须显式确认：
+推荐的静态区分度对照有 9 次，必须显式确认：
 
 ```powershell
 .venv\Scripts\python.exe run_evals.py `
@@ -852,6 +1072,7 @@ Profile 使用三层限制：模型只收到允许的工具 Schema，执行节�
 --runs N             每个组合重复 1–10 次
 --output PATH        自定义 JSON 输出路径
 --yes                显式确认超过 3 次真实 Agent 调查
+--allow-runtime      预授权 full_runtime 执行预登记 Demo Case
 ```
 
 `--compare` 和 `--profile` 互斥。开始前程序会打印即将进行的 Agent 调查总数。
@@ -893,6 +1114,8 @@ ExperimentRun
 - 上下文压缩平均次数、Observation 利用率平均值与总体标准差；
 - 未引用成功 Observation 总数、确认根因后的额外工具调用总数；
 - 人工确认和受保护路径尝试次数；
+- Runtime 请求、成功、超时、批准、拒绝和幂等重放次数；
+- approved 历史记忆召回次数；
 - Token 平均值与标准差；
 - 强制总结次数和比例；
 - 格式修复次数、最终兜底次数和比例；
@@ -909,12 +1132,14 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 94 项测试，覆盖：
+当前共有 124 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
 - 路径越界、敏感配置和内部目录隔离；
 - 文件、RAG 和 Git 工具；
+- Runtime 工具白名单、严格参数、固定入口、结构化超时、环境密钥隔离和无 Shell 执行；
+- Runtime 摘要优先保留异常消息与业务 traceback 帧，长堆栈不会挤掉根因线索；
 - LangGraph 路由、报告重试、预算和强制总结；
 - 内部假设工具的格式、ID、成功 Observation 与状态约束；
 - 两项独立来源早停和单条证据不早停；
@@ -928,6 +1153,19 @@ ExperimentRun
 - 单轮工具上限拦截并行铺开，但允许下一轮重新规划；
 - 直到最后预算轮才确认的假设不会被误记为早停；
 - LangGraph 原生 HITL interrupt、checkpoint 与 resume；
+- Runtime 在执行前 interrupt，批准后恢复执行，拒绝后不启动进程；
+- SQLite 会话在关闭并重新打开 Store 后仍能从原 interrupt 恢复；
+- 当前终端可以处理审批并自动恢复，连续 interrupt 不要求用户重复复制调查 ID；
+- `Ctrl+C` 或 EOF 不会误执行审批，等待状态仍可在新进程中恢复；
+- V10 数据库自动增加 Memory 召回字段，不需要清空已有会话；
+- `doctor` 在不联网的情况下检查依赖、配置和 SQLite，且不会输出 API Key；
+- 同一 Runtime `execution_id` 只执行一次，已完成时重放结果，不确定时拒绝重跑；
+- API Key 不写入持久化 SQLite，`.incident_state` 不向 Agent 文件工具暴露；
+- 只有正常完成且证据引用完整的 medium/high 报告才生成 `pending` Memory；
+- pending/rejected Memory 不参与召回，approved Memory 才能按相似度进入新调查；
+- 同一源调查不会重复生成候选，`forget` 会精确删除指定 Memory；
+- 召回文本明确声明“历史不是证据”，且 `Evidence.source_type` 拒绝 `memory`；
+- 持久化调查记录召回 ID 和数量，兼容 `run_agent()` 不读取或写入长期记忆；
 - 超过三次真实调查的费用保护；
 - 并行工具请求不能越过执行层硬预算，超额请求仍保留失败 Observation；
 - 重复工具调用纠正窗口与二次重复保护；
@@ -937,12 +1175,14 @@ ExperimentRun
 - 四个可执行 Demo 故障稳定复现；
 - Profile 对 RAG 文档和外部系统夹具的路径级隔离；
 - 文档得分必须由 `retrieve_docs` 调用触发；
+- 精确错误码和配置键在混合检索中获得额外权重，供应商契约优先召回；
 - 评分、引用验证和 JSON 保存；
 - 带单位数值关键词和终端失败原因；
 - Tool Observation 生成、ID 回传和来源范围提取；
 - 伪造 Observation、越界行号和缺失 Evidence 拒绝；
 - Git Commit 短哈希与真实 `git_log` Observation 绑定；
 - Claim—Evidence Ledger 完整性与 Evidence 落地评分；
+- Runtime ID 来源绑定和 `runtime_required` 硬通过条件；
 - 多 Profile、多次运行、标准差和聚合输出；
 - 旧 `run_agent()` 接口兼容。
 
@@ -955,18 +1195,27 @@ ExperimentRun
 - 所有文件路径解析后必须仍在项目根目录；
 - `api.env`、`.env` 等敏感配置不可读取或搜索；
 - `.git`、`.venv`、缓存、构建目录和依赖目录不会进入文件列表或代码搜索；
-- `evals/`、评测实现、评测测试、`.incident_cache/` 和 `.incident_reports/` 对 Agent 不可见；
+- `evals/`、评测实现、评测测试、`.incident_cache/`、`.incident_reports/` 和 `.incident_state/` 对 Agent 不可见；
 - `git_diff` 只接受单个现有文件，不能用仓库根目录批量泄露隐藏内容；
 - 二进制或非 UTF-8 文件不会作为文本发送给模型；
 - 文件内容、搜索命中和目录项都有数量或长度限制。
 
-### 13.2 只读边界
+### 13.2 调查与执行边界
 
-当前所有 Agent 工具都是只读的。Git 工具不通过 Shell 拼接命令，文件工具不提供写入，系统提示也明确禁止修改。Evaluation 自己会在 `.incident_reports/` 写报告，RAG 会在 `.incident_cache/` 写缓存；这两个写入属于本地基础设施，不是模型可调用的业务写入工具。
+文件、RAG 和 Git 工具都是只读的。Runtime 工具会启动一个本地子进程，但不接受模型提供的命令、路径或任意参数，只能选择预登记 Case；它还受默认关闭的环境开关、独立 Profile、交互式单次审批、调用次数、超时和持久幂等账本共同约束。Git 工具和 Runtime 工具都不通过 Shell 拼接命令，文件工具不提供写入，系统提示也明确禁止修改。Evaluation 在 `.incident_reports/` 写报告，RAG 在 `.incident_cache/` 写缓存，持久化 CLI 在 `.incident_state/` 写状态；这些属于本地基础设施，不是模型可调用的业务写入工具。
 
 ### 13.3 外部模型数据边界
 
 文件和文档首先由本地工具读取，但工具结果会加入消息并发送给配置的模型服务。所谓“本地工具”不代表代码内容永远留在本机。不要用当前版本调查不允许发送给服务商的私有代码。
+
+### 13.4 长期记忆与污染防护
+
+- 新报告先成为 `pending` 候选，不会自动进入召回池；
+- 只有用户明确批准的记录参与召回，拒绝项仍可审计，删除只作用于精确 Memory ID；
+- 召回排序在本机完成，不会为了搜索历史额外调用模型；
+- 历史内容进入提示词时带有非证据标记，不能获得 Observation ID；
+- 最终 Evidence 的来源类型只允许代码、文档、Git 和 Runtime 等当前调查来源，不接受 `memory`；
+- 即使历史根因与新问题高度相似，Agent 仍需读取当前来源重新建立证据链。
 
 ## 14. 如何提出高质量问题
 
@@ -1024,15 +1273,15 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ### Agent 调用了很多工具
 
-一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。V8.1.1 默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型和工具调用，交互模式达到软阈值则暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
+一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。V10.2 默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
 
 ### Evaluation 为什么提示费用保护
 
-一次 Profile × 一个 Case × 一次重复等于一次完整 Agent 调查，而一次调查内部可能调用模型多次。V8 默认最多免确认运行 3 次；更大的批量任务必须添加 `--yes`。建议先运行一个 Case 和一个 Profile，不要把 `--compare --runs 3 --yes` 当作烟雾测试。
+一次 Profile × 一个 Case × 一次重复等于一次完整 Agent 调查，而一次调查内部可能调用模型多次。当前最多免确认运行 3 次；更大的批量任务必须添加 `--yes`。建议先运行一个 Case 和一个 Profile，不要把 `--compare --runs 3 --yes` 当作烟雾测试。Runtime 评测还需要单独添加 `--allow-runtime`。
 
 ### Evaluation 为什么没有触发人工审查
 
-`run_evals.py` 是无人值守、可重复的批量评测，默认调用 `run_agent_detailed(..., human_review=False)`；否则实验会等待键盘输入，而且不同人工选择会污染 Profile 对照。因此即使达到 HITL 软阈值，Evaluation 也不会暂停，但模型和工具硬预算仍然生效。
+`run_evals.py` 是无人值守、可重复的批量评测，默认调用 `run_agent_detailed(..., human_review=False)`；否则实验会等待键盘输入，而且不同人工选择会污染 Profile 对照。因此即使达到 HITL 软阈值，Evaluation 也不会暂停，但模型和工具硬预算仍然生效。Runtime 专项实验用命令行的 `--allow-runtime` 作为整次运行的显式预授权，并会把实际执行次数写入报告。
 
 要验证人工审查，请运行交互入口：
 
@@ -1042,17 +1291,37 @@ ModuleNotFoundError: No module named 'langgraph'
 
 默认在模型调用达到 5 次或工具调用达到 10 次时暂停。若只想演示流程，可暂时在 `api.env` 将两个 `HITL_*_THRESHOLD` 设为 1，验证后恢复默认值；如果 Agent 在阈值前已经取得充分证据并结束，则不触发人工确认是正确行为。
 
+### 为什么没有看到 Runtime 批准提示
+
+先确认 `api.env` 中是 `ENABLE_RUNTIME_TOOLS=true`，并且重启了 `main.py`。批准提示不是启动程序时固定出现，而是模型实际选择 `run_demo_case` 时才出现；问题里明确写“实际复现”更容易触发。若模型只靠静态证据结束，说明它没有请求执行。要确定性验证这项能力，请运行 `runtime_required + full_runtime + --allow-runtime` 专项 Evaluation，并检查 JSON 中 `runtime_call_count`、Runtime Observation 和最终 Evidence 的 `runtime_id`。
+
 ### Evaluation 答案正确但没有通过
 
 当前根因评分仍然是字面关键词规则。正确同义表达可能造成假阴性。先查看 JSON 中缺失的具体关键词，不要只看总通过率。未来将使用同义概念组和 LLM Judge 做混合评测。
 
+### 为什么现在通常不需要手动 resume
+
+`main.py new` 收到 LangGraph interrupt 后会先确保 Checkpoint 已经写盘，然后直接在当前终端询问。你作出选择后，CLI 在内部发送 `Command(resume=...)` 并继续运行；即使连续出现 Runtime 审批和费用审查，也会在同一个命令中依次处理。只有按 `Ctrl+C`、输入流结束、终端意外关闭，或者主动使用 `new --detach` 时，调查才停在等待状态，此时再执行输出中的 `resume <调查ID>`。
+
 ### Checkpoint 在重启后丢失
 
-当前使用 `InMemorySaver`。退出 Python 后状态消失。跨进程恢复需要 SQLite 或 PostgreSQL Checkpointer，以及能够按 thread ID 恢复的交互入口。
+如果使用无参数的 `main.py` 或直接调用 `run_agent()`，这条兼容路径仍是 `InMemorySaver`，退出后不保留。需要重启恢复时，从 `main.py new` 开始，再用 `list/show/resume` 管理调查。
+
+### Runtime 审批后恢复时会不会执行两次
+
+正常完成的相同 `execution_id` 只返回账本中的原结果，不启动第二次进程。如果机器在外部进程启动后、结果记录前崩溃，账本会保留 `running`；此时系统拒绝自动重跑，需要人工判断。这比盲目重试执行型操作更安全。
+
+### 为什么完成调查后没有产生 Memory
+
+只有通过持久化 `main.py new/resume` 完成的调查才会沉淀长期记忆，而且报告必须正常完成、置信度为 medium/high、同时包含 Claim 与 Evidence，并且所有 Claim 引用都能找到对应 Evidence。取消、失败、低置信度和引用不完整都不会生成候选。兼容入口 `main.py` 无参数模式和 `run_agent()` 有意不读写长期记忆。
+
+### 为什么相似问题没有召回历史
+
+先运行 `memory list --status pending`，确认候选是否还未审批；只有 `memory approve <memory_id>` 后才会进入召回池。召回采用本地词法匹配，问题中至少要有与历史异常类型、关键标识符、文件或根因摘要相关的词。可以先用 `memory search <关键词>` 检查本地排序结果。即使召回成功，它也只是调查提示，不会直接出现在最终 Evidence 中。
 
 ## 16. 当前限制
 
-- Demo 只有六个评测案例，规模仍然太小，不能代表生产环境；
+- Demo 只有七个评测案例，规模仍然太小，不能代表生产环境；
 - Case、代码注释和事故文档比较明确，存在玩具数据集偏简单的问题；
 - 根因关键词不理解同义词，也可能被关键词投机；
 - Observation 能确认模型实际看过来源，但不能完全判断自然语言 Claim 与证据的语义蕴含关系；
@@ -1060,38 +1329,43 @@ ModuleNotFoundError: No module named 'langgraph'
 - 已记录服务商返回的 Token，但尚未根据不同模型价格计算真实金额；服务商不返回 usage 时 Token 显示 0；
 - Observation 只保存最多 1000 字符结果摘要和 SHA-256，完整工具内容主要保留在 LangGraph 消息状态中；
 - 发给模型的压缩记忆将每个 Observation 摘要限制为 700 字符；普通调查只保留所有已引用证据和最近 4 条未引用结果，最终报告阶段则恢复全部带来源的成功结果。长结果中的次要细节仍可能被省略，但本地 Checkpoint 中的完整消息不会被删除；
-- 上下文压缩的实际 Token 节省依赖模型服务是否返回 usage，必须通过同一 Case 的真实 V8/V8.1.1 对照确认，离线测试不能证明具体节省比例；
+- 上下文压缩的实际 Token 节省依赖模型服务是否返回 usage，必须通过同一 Case、同一模型的真实对照确认，离线测试不能证明具体节省比例；
 - `confidence` 是模型自我声明，不是校准后的概率；
-- `InMemorySaver` 不能跨进程恢复；
 - 已有确定性假设 Gate，但“两个独立来源”是工程启发式，不等于自然语言语义蕴含证明；
-- HITL 目前只在同一 Python 进程内恢复，也不会授权绕过评测和敏感路径隔离；
-- CLI 每次运行最多触发一次人工决策，尚未实现多阶段审批策略；
-- 没有安全命令执行、补丁生成与修复验证；
+- 跨进程 HITL 只在单机 SQLite CLI 路径提供；直接 `run_agent()` 仍是内存模式，也不会授权绕过评测和敏感路径隔离；
+- SQLite 适合单机演示，尚无多用户身份、会话归属和分布式并发控制；
+- 长期记忆当前是单机 SQLite 中的人工审批记录，没有用户级权限、过期策略和跨项目共享；
+- Memory 召回使用可解释词法相似度，没有 Embedding、向量数据库或学习型重排；表达完全不同但语义相同的事故可能无法命中；
+- 已批准的历史仍可能过时或错误，因此只能作为候选假设，必须在当前调查中重新取证；
+- 外部子进程与 SQLite 不能组成单个原子事务；崩溃留下的 `running` Runtime 操作需要人工处理；
+- Runtime 只覆盖本仓库四个固定 Demo Case，不是通用沙箱，不能执行任意测试命令；
+- Runtime 批准按当前模型工具请求生效，默认预算只允许实际运行一次；尚未实现风险等级和审批策略引擎；
+- 没有补丁生成、人工批准写入、修复后测试和回滚；
 - 没有 Web UI 或服务端 API。
+- `requirements.lock` 只锁定五个直接依赖，没有像完整锁文件工具那样记录所有传递依赖和平台哈希。
 
 ## 17. 后续规划
 
 推荐顺序：
 
-1. 用同一个单案例低成本实验建立 V8/V8.1.1 的准确性、工具调用、Token、Observation 利用率和早停对照；
-2. 将 `InMemorySaver` 替换为 SQLite/PostgreSQL Checkpointer，支持进程重启后按 thread ID 恢复；
-3. 在任何执行命令和修改文件能力之前增加独立人工审批；
-4. 增加受限命令执行，用真实 Runtime Evidence 自动复现；
-5. 增加补丁提议、人工批准、应用补丁和测试验证；
-6. 将本地确定性规则与 LLM Judge 组合，并增加真实费用和多模型对比；
-7. 扩展隐藏评测集，分离开发集与测试集。
+1. 将 V10.2 作为稳定基线：先运行 `doctor`，再手工验收一次当场审批、一次关闭终端后恢复和一次 Memory 召回；
+2. V11 把固定 Demo Runner 扩展为隔离的测试 Harness，但仍由命令模板白名单决定，不开放任意 Shell；
+3. V12 增加“只生成补丁、不写入”的 Patch Proposal 和差异审查；
+4. V13 再增加独立写入审批、临时工作区应用、测试验证和失败回滚；
+5. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用和多模型对比；
+6. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库。
 
-Human-in-the-loop 必须早于任何自动执行或修改能力。否则 Agent 在证据不足或判断错误时可能直接产生有副作用的操作。
+系统把可持久的 Human-in-the-loop 放在第一个执行型工具之前，又把另一类人工审批用于长期知识进入召回池之前。将来增加任何写入能力时，不能复用这两类批准，而要建立独立的补丁审批门。
 
 ## 18. 面试讲解版本
 
 一句话：
 
-> IncidentPilot 是一个基于 LangGraph 的只读、成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。最终 Claim 必须绑定真实 Evidence，并通过文件行号、RAG Chunk 或 Git Commit 验证来源。成本阈值或冲突会用原生 interrupt 暂停，由用户决定继续、总结或取消。
+> IncidentPilot 是一个基于 LangGraph 的成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。执行型 Runtime 在工具运行前由 interrupt 请求批准，SQLite Checkpoint 支持跨进程恢复，持久幂等账本避免恢复时重复执行。成功事故可以沉淀为人工审批的长期记忆，但召回历史只能引导假设，必须用当前代码、文档、Git 或 Runtime 重新取证。V10.2 将底层 resume 封装为当前终端自动恢复，并用本地自检与依赖基线提高可重复性。
 
 完整流程：
 
-> 用户提交完整 traceback 后，模型先通过内部控制工具保存候选 Hypothesis，并为未确认假设声明一项可证伪的下一步动作。每轮只执行有限数量的高信息价值只读工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。系统拒绝不存在和失败的 Observation 引用；confirmed 假设必须获得至少两项独立来源才触发早停。达到费用阈值、保护路径或假设冲突时，LangGraph `interrupt()` 保存 checkpoint，用户决策通过 `Command(resume=...)` 恢复。最终 Claim—Evidence Ledger 还要经过 Pydantic 和 Provenance 双重验证。Evaluation 同时衡量准确性、证据落地、上下文压缩、Observation 利用率、早停、Token、工具贡献和稳定性，并在批量真实调用前执行费用保护。
+> 用户提交完整 traceback 后，持久化入口先在本地召回最多三条已审批相似事故，并明确标为非证据线索。模型通过内部控制工具保存候选 Hypothesis，为未确认假设声明可证伪的下一步动作，每轮只执行有限数量的高信息价值工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。若需要真实复现，`run_demo_case` 请求先进入 `runtime_review`，SQLite Checkpoint 在执行前同步持久化 interrupt；用户可在另一进程中批准，幂等账本再决定是真正执行、返回旧结果还是因结果不确定而拒绝重跑。系统拒绝不存在、失败、伪造或来自历史 Memory 的 Evidence；confirmed 假设必须获得至少两项独立来源才触发早停。最终 Claim—Evidence Ledger 经过 Pydantic 和 Provenance 双重验证，合格报告才生成待审批 Memory。Evaluation 同时衡量准确性、证据落地、Runtime 使用、历史召回、上下文压缩、Token、工具贡献和稳定性。
 
 ## 19. 文档维护规则
 

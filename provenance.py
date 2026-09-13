@@ -1,4 +1,4 @@
-"""V7 工具 Observation 提取与 Claim—Evidence 来源验证。"""
+"""V9 工具 Observation 提取与代码、文档、Git、Runtime 来源验证。"""
 
 import hashlib
 import json
@@ -87,6 +87,11 @@ def extract_observed_sources(tool_name: str, result_payload: dict[str, Any]) -> 
             for item in data.get("chunks", [])
             if item.get("source")
         ]
+    if tool_name == "run_demo_case" and data.get("run_id"):
+        return [ObservedSource(
+            source_type="runtime",
+            runtime_id=data["run_id"],
+        )]
     output = data.get("output", "")
     if tool_name == "git_log":
         return [
@@ -156,6 +161,10 @@ def evidence_is_grounded(evidence: Evidence, observation: ToolObservation | None
             if source.commit_hash and source.commit_hash.lower().startswith(
                 evidence.commit_hash.lower()
             ):
+                return True
+            continue
+        if evidence.source_type == "runtime" and evidence.runtime_id:
+            if source.runtime_id == evidence.runtime_id:
                 return True
             continue
         if not evidence.file or _normalized_path(source.file) != normalized_file:

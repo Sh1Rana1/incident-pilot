@@ -69,6 +69,7 @@ def fake_result(invalid_line: bool = False) -> AgentRunResult:
                     line_start=9999 if invalid_line else 9,
                     line_end=9999 if invalid_line else 9,
                     commit_hash=None,
+                    runtime_id=None,
                     description="API 未校验字段",
                 ),
                 Evidence(
@@ -78,6 +79,7 @@ def fake_result(invalid_line: bool = False) -> AgentRunResult:
                     line_start=10,
                     line_end=10,
                     commit_hash=None,
+                    runtime_id=None,
                     description="直接读取 user_id",
                 ),
                 Evidence(
@@ -87,6 +89,7 @@ def fake_result(invalid_line: bool = False) -> AgentRunResult:
                     line_start=1,
                     line_end=1,
                     commit_hash=None,
+                    runtime_id=None,
                     description="接口约定",
                 ),
             ],
@@ -186,6 +189,51 @@ class ScoringTests(unittest.TestCase):
         result = score_case(missing_user_case(), without_rag, ROOT)
         self.assertEqual(result.scores.relevant_doc_rate, 0.0)
         self.assertTrue(result.scores.passed)
+
+    def test_runtime_required_case_needs_grounded_runtime_evidence(self) -> None:
+        case = missing_user_case().model_copy(update={
+            "requires_runtime_evidence": True,
+        })
+        base = fake_result()
+        missing = score_case(case, base, ROOT)
+        self.assertFalse(missing.scores.passed)
+        self.assertIn("missing_runtime_evidence", missing.scores.failure_reasons)
+
+        runtime_observation = ToolObservation(
+            observation_id="obs-004", tool_call_id="call-4", step=4,
+            tool_name="run_demo_case", arguments={"case_id": "missing_user_id"},
+            ok=True,
+            sources=[ObservedSource(
+                source_type="runtime", file="", runtime_id="runtime-test-001",
+            )],
+            result_sha256="d", result_excerpt="KeyError: user_id", duration_ms=2,
+        )
+        runtime_evidence = Evidence(
+            evidence_id="E4", observation_id="obs-004", source_type="runtime",
+            file="", line_start=None, line_end=None, commit_hash=None,
+            runtime_id="runtime-test-001", description="本地复现得到 KeyError",
+        )
+        report = base.report.model_copy(update={
+            "evidence": [*base.report.evidence, runtime_evidence],
+            "claims": [base.report.claims[0].model_copy(update={
+                "evidence_ids": [*base.report.claims[0].evidence_ids, "E4"],
+            })],
+        })
+        metrics = base.metrics.model_copy(update={
+            "runtime_call_count": 1,
+            "successful_runtime_call_count": 1,
+        })
+        grounded = score_case(
+            case,
+            base.model_copy(update={
+                "report": report,
+                "observations": [*base.observations, runtime_observation],
+                "metrics": metrics,
+            }),
+            ROOT,
+        )
+        self.assertTrue(grounded.scores.passed)
+        self.assertEqual(grounded.scores.runtime_evidence_count, 1)
 
     def test_numeric_keyword_with_unit_does_not_match_line_number(self) -> None:
         case = missing_user_case().model_copy(update={

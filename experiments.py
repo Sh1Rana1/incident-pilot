@@ -1,4 +1,4 @@
-"""V8.1.1 多工具 Profile、证据利用率、成本与稳定性实验。"""
+"""V10.2 多工具 Profile、Runtime、Memory 召回、成本与稳定性实验。"""
 
 import json
 from collections import Counter
@@ -49,6 +49,13 @@ class ProfileSummary(StrictModel):
     observation_utilization_rate_stddev: float
     total_unreferenced_successful_observations: int
     total_post_confirmation_tool_calls: int
+    total_runtime_calls: int
+    successful_runtime_calls: int
+    runtime_timeout_count: int
+    runtime_approval_count: int
+    runtime_denial_count: int
+    runtime_replay_count: int
+    total_recalled_memories: int
     format_repair_count: int
     synthesis_count: int
     synthesis_rate: float
@@ -165,6 +172,17 @@ def summarize_attempts(
         ),
         total_post_confirmation_tool_calls=sum(
             item.metrics.post_confirmation_tool_call_count for item in attempts
+        ),
+        total_runtime_calls=sum(item.metrics.runtime_call_count for item in attempts),
+        successful_runtime_calls=sum(
+            item.metrics.successful_runtime_call_count for item in attempts
+        ),
+        runtime_timeout_count=sum(item.metrics.runtime_timeout_count for item in attempts),
+        runtime_approval_count=sum(item.metrics.runtime_approval_count for item in attempts),
+        runtime_denial_count=sum(item.metrics.runtime_denial_count for item in attempts),
+        runtime_replay_count=sum(item.metrics.runtime_replay_count for item in attempts),
+        total_recalled_memories=sum(
+            item.metrics.recalled_memory_count for item in attempts
         ),
         format_repair_count=sum(item.metrics.format_repair_used for item in attempts),
         synthesis_count=synthesis_count,

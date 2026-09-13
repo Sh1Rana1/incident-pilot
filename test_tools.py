@@ -1,4 +1,4 @@
-"""V7 离线测试：注册、隔离、只读工具和报告展示。"""
+"""V10 离线测试：注册、隔离、只读工具和报告展示。"""
 
 import json
 import unittest
@@ -7,6 +7,7 @@ from config import resolve_capabilities
 from main import format_report
 from models import DiagnosticClaim, Evidence, IncidentReport, ToolResult
 from registry import registry
+import runtime_tools  # noqa: F401：触发 V9 Runtime 工具注册
 
 
 def call_tool(name: str, arguments: dict) -> ToolResult:
@@ -18,6 +19,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(set(registry.names()), {
             "read_file", "search_code", "list_files", "retrieve_docs",
             "git_status", "git_diff", "git_log",
+            "run_demo_case",
         })
 
     def test_schema_is_strict(self) -> None:
@@ -128,12 +130,38 @@ class FileToolTests(unittest.TestCase):
             for item in searched.data["matches"]
         ))
 
+    def test_demo_answer_tests_are_hidden_during_agent_run(self) -> None:
+        allowed = {"list_files", "search_code", "read_file"}
+        result = ToolResult.model_validate_json(registry.execute(
+            "read_file", '{"path":"test_demo_app.py"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        self.assertFalse(result.ok)
+        searched = ToolResult.model_validate_json(registry.execute(
+            "search_code", '{"query":"timeout_policy_violation"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        self.assertFalse(any(
+            item["path"] in {"test_demo_app.py", "test_runtime_tools.py"}
+            for item in searched.data["matches"]
+        ))
+
     def test_generated_evaluation_reports_are_not_visible(self) -> None:
         listed = call_tool("list_files", {"path": ".", "max_depth": 2})
         self.assertNotIn(".incident_reports", str(listed.data))
         result = call_tool(
             "read_file",
             {"path": ".incident_reports/eval-20260911-182414.json"},
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("内部", result.error or "")
+
+    def test_persistent_state_database_is_not_visible_to_agent(self) -> None:
+        listed = call_tool("list_files", {"path": ".", "max_depth": 2})
+        self.assertNotIn(".incident_state", str(listed.data))
+        result = call_tool(
+            "read_file",
+            {"path": ".incident_state/incident_pilot.sqlite3"},
         )
         self.assertFalse(result.ok)
         self.assertIn("内部", result.error or "")
@@ -218,6 +246,7 @@ class ReportTests(unittest.TestCase):
             evidence=[Evidence(
                 evidence_id="E1", observation_id="obs-001", source_type="code",
                 file="app.py", line_start=3, line_end=3, commit_hash=None,
+                runtime_id=None,
                 description="直接读取字段"
             )],
             suggested_fixes=["校验字段"],
@@ -262,6 +291,20 @@ class RetrievalToolTests(unittest.TestCase):
         )
         sources = {chunk["source"] for chunk in result.data["chunks"]}
         self.assertIn("demo_app/docs/database.md", sources)
+
+    def test_runtime_timeout_query_prioritizes_supplier_contract(self) -> None:
+        result = call_tool(
+            "retrieve_docs",
+            {
+                "query": "timeout_policy_violation timeout_seconds 配置约定",
+                "top_k": 3,
+            },
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.data["chunks"][0]["source"],
+            "demo_app/docs/integrations.md",
+        )
 
 
 class GitToolTests(unittest.TestCase):

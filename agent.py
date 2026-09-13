@@ -1,4 +1,4 @@
-"""IncidentPilot V8.1.1 公开入口：运行证据保全、可中断的诊断图。"""
+"""IncidentPilot V10 公开入口：保留单进程诊断的兼容接口。"""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +20,7 @@ from models import (
     ToolObservation,
 )
 from tool_profiles import resolve_tool_profile
+from tool_profiles import RUNTIME_TOOLS
 
 
 ROOT = Path(__file__).resolve().parent
@@ -41,12 +42,22 @@ def run_agent_detailed(
     max_tool_calls: int | None = None,
     human_review: bool = False,
     review_handler: HumanReviewHandler | None = None,
+    allow_runtime_execution: bool = False,
 ) -> AgentRunResult:
     """运行状态图，并返回最终报告和可用于评测的运行指标。"""
     if human_review and review_handler is None:
         raise ValueError("启用 human_review 时必须提供 review_handler")
-    profile_name, allowed_tools = resolve_tool_profile(tool_profile)
     client, config = create_client()
+    profile_name, profile_tools = resolve_tool_profile(tool_profile)
+    runtime_tools_enabled = bool(
+        RUNTIME_TOOLS & profile_tools
+        and (config.runtime_tools_enabled or allow_runtime_execution)
+    )
+    allowed_tools = (
+        profile_tools
+        if runtime_tools_enabled
+        else profile_tools - RUNTIME_TOOLS
+    )
     app = build_agent_graph(
         client,
         config,
@@ -56,6 +67,7 @@ def run_agent_detailed(
     )
     resolved_model_budget = max_model_calls or config.max_model_calls
     resolved_tool_budget = max_tool_calls or config.max_tool_calls
+    resolved_thread_id = thread_id or str(uuid4())
     if resolved_model_budget < 3:
         raise ValueError("max_model_calls 必须大于等于 3，以保留总结和格式修复预算")
     if resolved_tool_budget < 1:
@@ -98,10 +110,24 @@ def run_agent_detailed(
         "context_compaction_count": 0,
         "confirmed_at_tool_call_count": None,
         "hypothesis_update_required": False,
+        "runtime_tools_enabled": runtime_tools_enabled,
+        "runtime_execution_preapproved": allow_runtime_execution,
+        "runtime_execution_decision": None,
+        "runtime_call_count": 0,
+        "successful_runtime_call_count": 0,
+        "runtime_timeout_count": 0,
+        "runtime_approval_count": 0,
+        "runtime_denial_count": 0,
+        "runtime_replay_count": 0,
+        "max_runtime_calls": config.max_runtime_calls,
+        # 兼容入口使用内存 Checkpoint，不开启跨进程 Runtime 账本。
+        "runtime_ledger_path": None,
+        "thread_id": resolved_thread_id,
+        "recalled_memory_count": 0,
     }
     runtime_config = {
-        "configurable": {"thread_id": thread_id or str(uuid4())},
-        "recursion_limit": max_steps * 3 + 5,
+        "configurable": {"thread_id": resolved_thread_id},
+        "recursion_limit": max_steps * 4 + 8,
     }
     started_at = perf_counter()
     final_state = app.invoke(initial_state, config=runtime_config)
@@ -194,6 +220,15 @@ def run_agent_detailed(
             final_state.get("tool_call_count", 0)
             - final_state.get("confirmed_at_tool_call_count", final_state.get("tool_call_count", 0)),
         ) if final_state.get("confirmed_at_tool_call_count") is not None else 0,
+        runtime_call_count=final_state.get("runtime_call_count", 0),
+        successful_runtime_call_count=final_state.get(
+            "successful_runtime_call_count", 0
+        ),
+        runtime_timeout_count=final_state.get("runtime_timeout_count", 0),
+        runtime_approval_count=final_state.get("runtime_approval_count", 0),
+        runtime_denial_count=final_state.get("runtime_denial_count", 0),
+        runtime_replay_count=final_state.get("runtime_replay_count", 0),
+        recalled_memory_count=final_state.get("recalled_memory_count", 0),
         tool_names=tool_names,
         stop_reason=final_state.get("stop_reason") or "unknown",
         duration_ms=round(duration_ms, 2),
@@ -216,6 +251,7 @@ def run_agent(
     max_tool_calls: int | None = None,
     human_review: bool = False,
     review_handler: HumanReviewHandler | None = None,
+    allow_runtime_execution: bool = False,
 ) -> IncidentReport:
     """兼容原有调用方：只返回报告。"""
     return run_agent_detailed(
@@ -227,4 +263,5 @@ def run_agent(
         max_tool_calls,
         human_review,
         review_handler,
+        allow_runtime_execution,
     ).report
