@@ -79,6 +79,8 @@ class SessionStoreTests(unittest.TestCase):
 
         allowed = build_mock.call_args.kwargs["allowed_tools"]
         self.assertNotIn("run_demo_case", allowed)
+        self.assertNotIn("list_checks", allowed)
+        self.assertNotIn("run_check", allowed)
 
     def test_session_index_survives_close_and_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

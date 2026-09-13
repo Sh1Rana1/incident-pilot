@@ -1,5 +1,6 @@
-"""V10.2 本地启动自检；不连接模型服务，也不输出 API Key。"""
+"""V11 本地启动自检；不连接模型服务，也不输出 API Key。"""
 
+import json
 import sys
 import sqlite3
 from dataclasses import dataclass
@@ -89,6 +90,28 @@ def run_doctor(
             ))
         except Exception as exc:
             checks.append(DoctorCheck("api.env", False, str(exc)))
+
+    try:
+        manifest_path = root / "harness.json"
+        if missing:
+            raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+            if raw_manifest.get("version") != 1 or not raw_manifest.get("checks"):
+                raise ValueError("需要 version=1 且 checks 不能为空")
+            detail = (
+                f"version=1, checks={len(raw_manifest['checks'])}；"
+                "安装依赖后将执行完整安全校验"
+            )
+        else:
+            from harness import load_harness_manifest
+
+            manifest, digest = load_harness_manifest(manifest_path)
+            detail = (
+                f"version={manifest.version}, checks={len(manifest.checks)}, "
+                f"sha256={digest[:12]}"
+            )
+        checks.append(DoctorCheck("Safe Test Harness", True, detail))
+    except Exception as exc:
+        checks.append(DoctorCheck("Safe Test Harness", False, str(exc)))
 
     try:
         if missing:

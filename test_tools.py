@@ -19,7 +19,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(set(registry.names()), {
             "read_file", "search_code", "list_files", "retrieve_docs",
             "git_status", "git_diff", "git_log",
-            "run_demo_case",
+            "run_demo_case", "list_checks", "run_check",
         })
 
     def test_schema_is_strict(self) -> None:
@@ -96,6 +96,8 @@ class FileToolTests(unittest.TestCase):
         path = "demo_app/evals/missing_user_id.json"
         read_result = call_tool("read_file", {"path": path})
         self.assertFalse(read_result.ok)
+        harness_result = call_tool("read_file", {"path": "harness.json"})
+        self.assertFalse(harness_result.ok)
         search_result = call_tool("search_code", {"query": "root_cause_keywords"})
         self.assertFalse(any(
             "demo_app/evals/" in match["path"]

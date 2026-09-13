@@ -28,6 +28,8 @@ class ToolProfileTests(unittest.TestCase):
         self.assertIn("git_status", TOOL_PROFILES["full"])
         self.assertNotIn("run_demo_case", TOOL_PROFILES["full"])
         self.assertIn("run_demo_case", TOOL_PROFILES["full_runtime"])
+        self.assertIn("list_checks", TOOL_PROFILES["full_runtime"])
+        self.assertIn("run_check", TOOL_PROFILES["full_runtime"])
 
     def test_schema_is_filtered_by_profile(self) -> None:
         allowed = resolve_tool_profile("code_only")[1]

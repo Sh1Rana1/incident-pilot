@@ -1,4 +1,4 @@
-"""V10.2 可跨进程恢复、可召回已批准历史线索的会话编排。"""
+"""V11 可跨进程恢复、可召回已批准历史线索的会话编排。"""
 
 from time import perf_counter
 from uuid import uuid4

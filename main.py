@@ -1,4 +1,4 @@
-"""V10.2 稳定命令行入口：当场审批、自动恢复与本地自检。"""
+"""V11 命令行入口：持久会话、当场审批与 Safe Test Harness。"""
 
 import argparse
 import sys
@@ -130,7 +130,7 @@ def _print_session(record: SessionRecord) -> None:
 
 def _legacy_main() -> None:
     """保留 V9 的单进程使用方式，避免破坏原有习惯和调用方。"""
-    print("IncidentPilot V10.2 Stable · Durable Memory LangGraph（输入 exit 退出）")
+    print("IncidentPilot V11 · Safe Test Harness LangGraph（输入 exit 退出）")
     while True:
         try:
             question = read_multiline_question()
@@ -272,7 +272,7 @@ def _memory_command(args: argparse.Namespace) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="IncidentPilot V10.2 Stable")
+    parser = argparse.ArgumentParser(description="IncidentPilot V11 Safe Test Harness")
     commands = parser.add_subparsers(dest="command", required=True)
     new_parser = commands.add_parser("new", help="创建调查并当场处理审批")
     new_parser.add_argument(
@@ -306,7 +306,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """无参数保留传统模式；显式子命令使用 V10.2 持久化入口。"""
+    """无参数保留传统模式；显式子命令使用 V11 持久化入口。"""
     args_list = [] if argv is None else argv
     if not args_list:
         _legacy_main()

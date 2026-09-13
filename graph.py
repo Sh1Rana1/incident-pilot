@@ -1,4 +1,4 @@
-"""IncidentPilot V10.2 假设驱动、历史线索、可恢复 Runtime 与来源验证图。"""
+"""IncidentPilot V11 假设驱动、Safe Test Harness 与来源验证图。"""
 
 import json
 import hashlib
@@ -40,6 +40,8 @@ from runtime_tools import (
     reset_runtime_execution,
     reset_runtime_timeout,
 )
+from tool_profiles import RUNTIME_EXECUTION_TOOLS
+import harness  # noqa: F401：导入时注册 V11 Harness 工具
 import tools  # noqa: F401：导入时触发工具注册
 
 
@@ -51,8 +53,8 @@ SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的�
 只要上一轮产生了新的成功 Observation，下一轮必须先成功调用 update_hypotheses；完成更新前不要继续调用外部工具。
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
-当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围，再调用 run_demo_case；它只能运行预登记案例，不能接受 Shell 命令。
-run_demo_case 返回的 exception_message 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
+当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 仍可复现四个固定案例。这些工具都不能接受 Shell 命令。
+run_check/run_demo_case 返回的 exception_message、failed_tests 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
 当某个假设已由至少两项独立来源确认时，应停止扩散调查并输出最终报告。
 不要猜测；不要声称看过没有读取的文件。
 每个工具结果的 meta.observation_id 是系统生成的真实来源编号。
@@ -170,7 +172,7 @@ def route_after_model(state: AgentState) -> str:
     last_message = state["messages"][-1]
     if last_message.get("tool_calls"):
         requests_runtime = any(
-            call.get("function", {}).get("name") == "run_demo_case"
+            call.get("function", {}).get("name") in RUNTIME_EXECUTION_TOOLS
             for call in last_message["tool_calls"]
         )
         if (
@@ -347,20 +349,22 @@ def build_agent_graph(
 
     def runtime_review(state: AgentState) -> dict:
         """在任何运行时工具实际执行前，用 Checkpoint 暂停并取得单次授权。"""
-        case_ids: list[str] = []
+        requested_items: list[str] = []
         for call in state["messages"][-1].get("tool_calls", []):
-            if call.get("function", {}).get("name") != "run_demo_case":
+            name = call.get("function", {}).get("name")
+            if name not in RUNTIME_EXECUTION_TOOLS:
                 continue
             try:
                 payload = json.loads(call["function"].get("arguments", "{}"))
-                case_ids.append(str(payload.get("case_id", "unknown")))
+                identifier = payload.get("check_id") or payload.get("case_id")
+                requested_items.append(f"{name}({identifier or 'unknown'})")
             except (json.JSONDecodeError, TypeError):
-                case_ids.append("invalid")
+                requested_items.append(f"{name}(invalid)")
         request = HumanReviewRequest(
             reason="runtime_execution",
             message=(
-                "Agent 请求运行预登记故障案例："
-                + ", ".join(case_ids)
+                "Agent 请求运行预登记检查："
+                + ", ".join(requested_items)
                 + "。本次授权只适用于当前工具调用，不允许任意命令。"
             ),
             model_call_count=state.get("model_call_count", 0),
@@ -520,7 +524,7 @@ def build_agent_graph(
                 print(f"跳过重复工具调用: {name}({arguments})")
             else:
                 runtime_block_reason: str | None = None
-                if name == "run_demo_case":
+                if name in RUNTIME_EXECUTION_TOOLS:
                     if state.get("runtime_execution_decision") == "deny":
                         runtime_block_reason = "用户拒绝了本次运行时执行。"
                     elif not (
@@ -543,7 +547,7 @@ def build_agent_graph(
                         config.runtime_timeout_seconds
                     )
                     execution_token = None
-                    if name == "run_demo_case" and state.get("runtime_ledger_path"):
+                    if name in RUNTIME_EXECUTION_TOOLS and state.get("runtime_ledger_path"):
                         execution_id = hashlib.sha256(
                             f"{state.get('thread_id', '')}:{tool_call['id']}".encode("utf-8")
                         ).hexdigest()[:24]
@@ -563,7 +567,7 @@ def build_agent_graph(
                             reset_runtime_execution(execution_token)
                         reset_runtime_timeout(timeout_token)
                     print(f"工具结果: {result[:500]}")
-                    if name == "run_demo_case":
+                    if name in RUNTIME_EXECUTION_TOOLS:
                         runtime_call_count += 1
                         runtime_payload = json.loads(result)
                         if (runtime_payload.get("meta") or {}).get("replayed"):

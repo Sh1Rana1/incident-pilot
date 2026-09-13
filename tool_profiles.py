@@ -1,4 +1,4 @@
-"""V9 工具 Profile：同时限制工具集合、运行能力和数据范围。"""
+"""V11 工具 Profile：同时限制工具集合、Harness 运行能力和数据范围。"""
 
 from contextvars import ContextVar, Token
 from pathlib import PurePosixPath
@@ -10,7 +10,8 @@ ToolProfileName = Literal["code_only", "code_rag", "full", "full_runtime"]
 CODE_TOOLS = frozenset({"list_files", "search_code", "read_file"})
 RAG_TOOLS = frozenset({"retrieve_docs"})
 GIT_TOOLS = frozenset({"git_status", "git_diff", "git_log"})
-RUNTIME_TOOLS = frozenset({"run_demo_case"})
+RUNTIME_EXECUTION_TOOLS = frozenset({"run_demo_case", "run_check"})
+RUNTIME_TOOLS = RUNTIME_EXECUTION_TOOLS | frozenset({"list_checks"})
 
 TOOL_PROFILES: dict[ToolProfileName, frozenset[str]] = {
     "code_only": CODE_TOOLS,

@@ -1,4 +1,4 @@
-"""V10 受限运行时工具：预登记 Demo、最小环境与持久幂等账本。"""
+"""V11 受限运行时基础：预登记 Demo、共享解析器与持久幂等账本。"""
 
 import os
 import re
@@ -126,7 +126,7 @@ def _complete_execution(
         )
 
 
-def _excerpt(value: str | bytes | None) -> str:
+def runtime_excerpt(value: str | bytes | None) -> str:
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -135,7 +135,7 @@ def _excerpt(value: str | bytes | None) -> str:
     return redacted[-MAX_CAPTURE_CHARS:]
 
 
-def _runtime_environment() -> dict[str, str]:
+def runtime_environment() -> dict[str, str]:
     """只继承 Python/Windows 启动所需变量，不把 API 密钥带入子进程。"""
     allowed = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
     environment = {
@@ -145,7 +145,7 @@ def _runtime_environment() -> dict[str, str]:
     return environment
 
 
-def _exception_type(stderr: str) -> str | None:
+def runtime_exception_type(stderr: str) -> str | None:
     for line in reversed(stderr.splitlines()):
         match = re.match(r"([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception))(?::|$)", line.strip())
         if match:
@@ -153,7 +153,7 @@ def _exception_type(stderr: str) -> str | None:
     return None
 
 
-def _exception_message(stderr: str) -> str | None:
+def runtime_exception_message(stderr: str) -> str | None:
     for line in reversed(stderr.splitlines()):
         stripped = line.strip()
         if re.match(r"[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)(?::|$)", stripped):
@@ -161,7 +161,7 @@ def _exception_message(stderr: str) -> str | None:
     return None
 
 
-def _traceback_frames(stderr: str) -> list[dict[str, object]]:
+def runtime_traceback_frames(stderr: str) -> list[dict[str, object]]:
     frames: list[dict[str, object]] = []
     for path_text, line_text, function in re.findall(
         r'^\s*File "([^"]+)", line (\d+), in (.+)$', stderr, re.MULTILINE
@@ -181,6 +181,62 @@ def _traceback_frames(stderr: str) -> list[dict[str, object]]:
     return frames[-8:]
 
 
+def current_runtime_timeout_seconds() -> int:
+    return _RUNTIME_TIMEOUT_SECONDS.get()
+
+
+def begin_runtime_execution(
+    subject_id: str,
+) -> tuple[str | None, str | None, ToolResult | None]:
+    """为任一预登记 Runtime 工具领取幂等执行权。"""
+    execution_context = _RUNTIME_EXECUTION_CONTEXT.get()
+    if execution_context is None:
+        return None, None, None
+    execution_id, database_path = execution_context
+    claim, cached_result = _claim_execution(database_path, execution_id, subject_id)
+    if claim == "completed" and cached_result is not None:
+        cached = ToolResult.model_validate_json(cached_result)
+        return execution_id, database_path, cached.model_copy(update={
+            "meta": {
+                **cached.meta,
+                "execution_id": execution_id,
+                "replayed": True,
+            }
+        })
+    if claim == "collision":
+        return execution_id, database_path, ToolResult.failure(
+            "运行时执行 ID 与预登记项目不匹配，已拒绝执行",
+            execution_id=execution_id,
+            reason="runtime_execution_collision",
+        )
+    if claim == "indeterminate":
+        return execution_id, database_path, ToolResult.failure(
+            "该运行时操作此前已开始但没有可靠完成记录；为避免重复副作用，"
+            "系统不会自动重跑，请新建调查并重新审批。",
+            execution_id=execution_id,
+            reason="runtime_execution_indeterminate",
+        )
+    return execution_id, database_path, None
+
+
+def complete_runtime_execution(
+    result: ToolResult,
+    execution_id: str | None,
+    database_path: str | None,
+) -> ToolResult:
+    if execution_id is None or database_path is None:
+        return result
+    result = result.model_copy(update={
+        "meta": {
+            **result.meta,
+            "execution_id": execution_id,
+            "replayed": False,
+        }
+    })
+    _complete_execution(database_path, execution_id, result)
+    return result
+
+
 @registry.register(
     name="run_demo_case",
     description=(
@@ -190,53 +246,16 @@ def _traceback_frames(stderr: str) -> list[dict[str, object]]:
     arguments_model=RunDemoCaseArgs,
 )
 def run_demo_case_tool(arguments: RunDemoCaseArgs) -> ToolResult:
-    execution_context = _RUNTIME_EXECUTION_CONTEXT.get()
-    execution_id: str | None = None
-    database_path: str | None = None
-    if execution_context is not None:
-        execution_id, database_path = execution_context
-        claim, cached_result = _claim_execution(
-            database_path,
-            execution_id,
-            arguments.case_id,
-        )
-        if claim == "completed" and cached_result is not None:
-            cached = ToolResult.model_validate_json(cached_result)
-            return cached.model_copy(update={
-                "meta": {
-                    **cached.meta,
-                    "execution_id": execution_id,
-                    "replayed": True,
-                }
-            })
-        if claim == "collision":
-            return ToolResult.failure(
-                "运行时执行 ID 与案例不匹配，已拒绝执行",
-                execution_id=execution_id,
-                reason="runtime_execution_collision",
-            )
-        if claim == "indeterminate":
-            return ToolResult.failure(
-                "该运行时操作此前已开始但没有可靠完成记录；为避免重复副作用，"
-                "系统不会自动重跑，请新建调查并重新审批。",
-                execution_id=execution_id,
-                reason="runtime_execution_indeterminate",
-            )
+    execution_id, database_path, prior_result = begin_runtime_execution(
+        arguments.case_id
+    )
+    if prior_result is not None:
+        return prior_result
 
     def finalize(result: ToolResult) -> ToolResult:
-        if execution_id is None or database_path is None:
-            return result
-        result = result.model_copy(update={
-            "meta": {
-                **result.meta,
-                "execution_id": execution_id,
-                "replayed": False,
-            }
-        })
-        _complete_execution(database_path, execution_id, result)
-        return result
+        return complete_runtime_execution(result, execution_id, database_path)
 
-    timeout_seconds = _RUNTIME_TIMEOUT_SECONDS.get()
+    timeout_seconds = current_runtime_timeout_seconds()
     run_id = f"runtime-{arguments.case_id}-{uuid4().hex[:12]}"
     argv = [sys.executable, "-m", "demo_app.run_case", arguments.case_id]
     try:
@@ -247,7 +266,7 @@ def run_demo_case_tool(arguments: RunDemoCaseArgs) -> ToolResult:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_runtime_environment(),
+            env=runtime_environment(),
             timeout=timeout_seconds,
             check=False,
         )
@@ -258,12 +277,12 @@ def run_demo_case_tool(arguments: RunDemoCaseArgs) -> ToolResult:
             case_id=arguments.case_id,
             timeout_seconds=timeout_seconds,
             timed_out=True,
-            stdout_excerpt=_excerpt(exc.stdout),
-            stderr_excerpt=_excerpt(exc.stderr),
+            stdout_excerpt=runtime_excerpt(exc.stdout),
+            stderr_excerpt=runtime_excerpt(exc.stderr),
         ))
 
     raw_stderr = completed.stderr or ""
-    stderr = _excerpt(raw_stderr)
+    stderr = runtime_excerpt(raw_stderr)
     return finalize(ToolResult.success(
         {
             "run_id": run_id,
@@ -272,13 +291,13 @@ def run_demo_case_tool(arguments: RunDemoCaseArgs) -> ToolResult:
             "exit_code": completed.returncode,
             # 关键诊断字段放在长 traceback 之前，确保 Observation 摘要不会
             # 因固定长度截断而丢掉真正的异常与业务栈帧。
-            "exception_type": _exception_type(raw_stderr),
-            "exception_message": _exception_message(raw_stderr),
-            "traceback_frames": _traceback_frames(raw_stderr),
+            "exception_type": runtime_exception_type(raw_stderr),
+            "exception_message": runtime_exception_message(raw_stderr),
+            "traceback_frames": runtime_traceback_frames(raw_stderr),
             "timed_out": False,
             "timeout_seconds": timeout_seconds,
             "argv": ["<current-python>", "-m", "demo_app.run_case", arguments.case_id],
-            "stdout_excerpt": _excerpt(completed.stdout),
+            "stdout_excerpt": runtime_excerpt(completed.stdout),
             "stderr_excerpt": stderr,
         }
     ))

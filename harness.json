@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "check_id": "demo_missing_user_id",
+      "runner": "demo_case",
+      "target": "missing_user_id",
+      "description": "复现用户请求缺少 user_id 的 Demo 故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1]
+    },
+    {
+      "check_id": "demo_schema_mismatch",
+      "runner": "demo_case",
+      "target": "schema_mismatch",
+      "description": "复现代码与数据库 Schema 不一致的 Demo 故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1]
+    },
+    {
+      "check_id": "demo_connection_leak",
+      "runner": "demo_case",
+      "target": "connection_leak",
+      "description": "复现连接未释放导致连接池耗尽的 Demo 故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1]
+    },
+    {
+      "check_id": "demo_documentation_required",
+      "runner": "demo_case",
+      "target": "documentation_required",
+      "description": "复现 Webhook 配置违反供应商契约的 Demo 故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1]
+    },
+    {
+      "check_id": "demo_smoke_suite",
+      "runner": "unittest",
+      "target": "demo_app.checks.test_smoke",
+      "description": "运行不包含 Evaluation 标准答案的 Demo 基础 Smoke Test",
+      "timeout_seconds": 30,
+      "expected_exit_codes": [0]
+    }
+  ]
+}

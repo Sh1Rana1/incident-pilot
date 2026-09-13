@@ -1,4 +1,4 @@
-"""V10.2 统一数据模型：会话、长期记忆、验证轨迹与证据链。"""
+"""V11 统一数据模型：会话、长期记忆、验证轨迹与证据链。"""
 
 from typing import Any, Literal, Optional
 

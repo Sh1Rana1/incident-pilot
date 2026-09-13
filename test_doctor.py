@@ -1,6 +1,7 @@
-"""V10.2 启动自检测试；不创建模型客户端、不访问网络。"""
+"""V11 启动自检测试；不创建模型客户端、不访问网络。"""
 
 import os
+import json
 import tempfile
 import unittest
 from importlib.metadata import PackageNotFoundError
@@ -20,6 +21,20 @@ class DoctorTests(unittest.TestCase):
                 "MODEL=fake-model\n",
                 encoding="utf-8",
             )
+            (root / "harness.json").write_text(
+                json.dumps({
+                    "version": 1,
+                    "checks": [{
+                        "check_id": "demo_missing_user_id",
+                        "runner": "demo_case",
+                        "target": "missing_user_id",
+                        "description": "本地冒烟检查",
+                        "timeout_seconds": 5,
+                        "expected_exit_codes": [1],
+                    }],
+                }),
+                encoding="utf-8",
+            )
             with patch.dict(os.environ, {}, clear=True):
                 report = run_doctor(root, root / "state.sqlite3")
 
@@ -27,6 +42,7 @@ class DoctorTests(unittest.TestCase):
         rendered = "\n".join(item.detail for item in report.checks)
         self.assertNotIn("doctor-secret", rendered)
         self.assertIn("model=fake-model", rendered)
+        self.assertTrue(any(item.name == "Safe Test Harness" for item in report.checks))
 
     def test_missing_dependencies_and_configuration_are_reported_without_import_crash(
         self,

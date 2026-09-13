@@ -1,4 +1,4 @@
-"""V10.2 本地持久化：Checkpoint、会话目录与长期事故记忆。"""
+"""V11 本地持久化：Checkpoint、会话目录与长期事故记忆。"""
 
 import json
 import sqlite3

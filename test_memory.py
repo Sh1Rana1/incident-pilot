@@ -1,4 +1,4 @@
-"""V10.2 长期事故记忆测试；只使用本地 SQLite 和假模型。"""
+"""V11 长期事故记忆测试；只使用本地 SQLite 和假模型。"""
 
 import tempfile
 import unittest

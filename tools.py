@@ -22,6 +22,7 @@ INTERNAL_ONLY_DIRS = {
     ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures"
 }
 INTERNAL_ONLY_FILES = {
+    "harness.json",
     "evaluation.py",
     "experiments.py",
     "run_evals.py",
@@ -29,6 +30,7 @@ INTERNAL_ONLY_FILES = {
     "test_experiments.py",
     "test_demo_app.py",
     "test_runtime_tools.py",
+    "test_harness.py",
 }
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}

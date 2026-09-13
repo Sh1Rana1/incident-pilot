@@ -1,8 +1,10 @@
 """LangGraph 控制流测试；使用假模型，不调用真实 API。"""
 
 import json
+import subprocess
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from config import AppConfig
 from langgraph.checkpoint.memory import InMemorySaver
@@ -673,6 +675,55 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(resumed["runtime_denial_count"], 1)
         self.assertFalse(resumed["observations"][0]["ok"])
         self.assertIn("用户拒绝", resumed["observations"][0]["error"])
+
+    @patch("harness.subprocess.run")
+    def test_harness_check_interrupts_and_resumes_through_runtime_gate(
+        self, run_mock
+    ):
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=["python"],
+            returncode=1,
+            stdout="",
+            stderr="KeyError: 'user_id'",
+        )
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-harness", "type": "function",
+                "function": {
+                    "name": "run_check",
+                    "arguments": '{"check_id":"demo_missing_user_id"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+        saver = InMemorySaver()
+        app = build_agent_graph(
+            client,
+            test_config(),
+            checkpointer=saver,
+            allowed_tools=TOOL_PROFILES["full_runtime"],
+            tool_profile="full_runtime",
+        )
+        state = initial_state()
+        state["human_review_enabled"] = True
+        state["runtime_tools_enabled"] = True
+        runtime = {"configurable": {"thread_id": "harness-approval-test"}}
+
+        interrupted = app.invoke(state, config=runtime)
+        self.assertIn("__interrupt__", interrupted)
+        request = interrupted["__interrupt__"][0].value
+        self.assertIn("run_check(demo_missing_user_id)", request["message"])
+        resumed = app.invoke(
+            Command(resume={"action": "approve"}),
+            config=runtime,
+        )
+
+        self.assertEqual(resumed["runtime_call_count"], 1)
+        self.assertEqual(resumed["successful_runtime_call_count"], 1)
+        self.assertEqual(resumed["observations"][0]["tool_name"], "run_check")
+        self.assertEqual(
+            resumed["observations"][0]["sources"][0]["source_type"], "runtime"
+        )
 
     def test_parallel_tool_calls_cannot_exceed_hard_budget(self):
         client = FakeClient([

@@ -1,6 +1,6 @@
-# IncidentPilot V10.2 Stable
+# IncidentPilot V11 · Safe Test Harness
 
-IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看当前工作区的代码、文档和 Git 信息；它还可以在人工批准后运行预登记 Demo Case，取得真实 Runtime Evidence，最后输出结构化根因报告。系统使用 SQLite 保存可恢复会话和可审批长期事故记忆：新调查可以召回已批准的相似历史，但历史只是候选假设线索，不能冒充当前 Evidence。V10.2 是功能冻结后的稳定性版本，重点是减少人工操作、启动前自检和可重复安装，不增加新的 Agent 权限。
+IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看当前工作区的代码、文档和 Git 信息；它还可以在人工批准后，从项目所有者维护的安全清单中选择固定测试，取得真实 Runtime Evidence，最后输出结构化根因报告。系统使用 SQLite 保存可恢复会话和可审批长期事故记忆：新调查可以召回已批准的相似历史，但历史只是候选假设线索，不能冒充当前 Evidence。V11 在 V10.2 稳定基线上增加 Safe Test Harness，把“一小组写死的 Demo”扩展为“由人预登记、由 Agent 选择、由系统安全执行”的通用检查层。
 
 当前版本的重点是：
 
@@ -8,7 +8,9 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 每次模型请求前压缩历史，只发送原始问题、当前假设和必要 Observation 摘要；
 - 总结和格式修复时切换到证据保全模式，重新纳入所有带真实来源的成功 Observation；
 - 每轮最多执行三个外部工具，阻止一次响应并发铺开大量低价值调查；
-- 使用统一注册器管理七个只读调查工具和一个受限运行时工具；
+- 使用统一注册器管理八个只读调查工具和两个受限运行时工具；
+- 使用 `harness.json` 预登记测试；模型只能调用 `list_checks()` 和 `run_check(check_id)`，不能提交命令、路径、参数或环境变量；
+- 支持固定的 `demo_case`、`unittest` 和 `pytest` Runner，并返回退出码、通过/失败数量、失败测试名和异常摘要；
 - 使用内部 `update_hypotheses` 控制工具维护候选根因、支持证据和反证；
 - 使用结构化 `next_action` 明确下一工具、目的、支持条件和否定条件；
 - 新证据产生后强制先更新假设，未归类前禁止继续调用外部工具；
@@ -37,9 +39,9 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 统计上下文压缩、Observation 利用率和确认根因后的额外调用。
 - 将每次报告验证错误持久化到 Evaluation JSON，保留字段路径和具体原因。
 
-当前版本不会执行模型生成的任意命令，不会修改代码或操作生产环境。它只能运行本仓库四个预登记 Demo Case；默认关闭，而且交互模式每次执行前都会暂停请求批准。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
+当前版本不会执行模型生成的任意命令，不会修改代码或操作生产环境。它只能运行 `harness.json` 中由项目所有者预登记并通过安全校验的检查，以及为兼容旧版本保留的四个固定 Demo Case；Runtime 默认关闭，而且交互模式每次执行前都会暂停请求批准。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
 
-版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V10.2 Stable 的真实实现。
+版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V11 的真实实现。
 
 ## 1. 快速开始
 
@@ -126,9 +128,9 @@ RUNTIME_TIMEOUT_SECONDS=5
 | `MAX_TOOLS_PER_STEP` | 否 | 每个调查轮最多执行的外部工具数，默认 3，至少为 1 |
 | `HITL_MODEL_CALL_THRESHOLD` | 否 | 交互模式达到多少次模型调用后请求人工确认，默认 5 |
 | `HITL_TOOL_CALL_THRESHOLD` | 否 | 交互模式达到多少次工具调用后请求人工确认，默认 10 |
-| `ENABLE_RUNTIME_TOOLS` | 否 | 是否向交互式 Agent 暴露预登记 Runtime 工具，默认 `false` |
-| `MAX_RUNTIME_CALLS` | 否 | 一次调查最多实际执行多少个 Demo Case，默认 1 |
-| `RUNTIME_TIMEOUT_SECONDS` | 否 | 每次预登记案例的超时秒数，默认 5 |
+| `ENABLE_RUNTIME_TOOLS` | 否 | 是否向交互式 Agent 暴露预登记 Runtime/Harness 工具，默认 `false` |
+| `MAX_RUNTIME_CALLS` | 否 | 一次调查最多实际执行多少个预登记检查，默认 1 |
+| `RUNTIME_TIMEOUT_SECONDS` | 否 | 每次运行的全局超时上限，默认 5；会与清单超时取较小值 |
 
 `OUTPUT_MODE=auto` 的当前策略：
 
@@ -194,7 +196,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 选择 1 只批准当前预登记调用；选择 2 不执行但允许 Agent 根据静态证据继续；选择 3 取消本次调查。运行结束后建议将开关恢复为 `false`。
 
-### 1.5 V10.2 稳定持久化命令
+### 1.5 V11 稳定持久化命令
 
 不带参数的 `main.py` 仍是原来的连续交互模式。如果要在退出程序后继续调查，使用持久化命令：
 
@@ -218,7 +220,32 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 `new` 遇到 Runtime 或费用审查时，Checkpoint 已经先同步写入 SQLite，然后 CLI 当场显示审批问题；用户选择后，程序在内部调用 `Command(resume=...)`，不需要复制调查 ID。恢复后若再次出现审批，会在同一终端继续询问。只有按 `Ctrl+C`、输入流结束或主动使用 `--detach` 时才需要稍后运行 `resume`。数据保存在 `.incident_state/incident_pilot.sqlite3`，该目录被 Git 和 Agent 文件工具同时忽略。
 
-### 1.6 长期事故记忆命令
+### 1.6 第一次测试 Safe Test Harness
+
+先在 `api.env` 设置 `ENABLE_RUNTIME_TOOLS=true`，保持 `MAX_RUNTIME_CALLS=1`，再运行：
+
+```powershell
+.\.venv\Scripts\python.exe main.py new
+```
+
+粘贴下面的问题，最后多按一次 Enter：
+
+```text
+请使用 Safe Test Harness 列出可用检查，运行 demo_missing_user_id，
+结合 Runtime、代码和文档证据解释根因。不要运行其他检查。
+```
+
+预期过程是：Agent 先调用无需审批的 `list_checks`，确认 ID 存在；请求 `run_check` 时程序暂停；你输入 `1` 后固定子进程才启动。结果中应出现 `check_id=demo_missing_user_id`、`exit_code=1`、`expectation_met=true` 和以 `runtime-check-` 开头的 Runtime ID。这里退出码 1 是故障成功复现，不是 Harness 自己坏了。最后报告若引用 Runtime Evidence，必须绑定该 ID。
+
+这一步会调用你配置的模型。若只想验证本地 Harness 而不花 Token，可运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_harness
+```
+
+新增自己的检查时，只编辑 `harness.json`，选择受支持 Runner 并填写固定 target；先运行 `main.py doctor` 检查清单，再让 Agent 使用它。不要把用户输入、模型输出或可变字符串写进 target。`harness.json` 是权限清单，不应当由 Agent 自动改写。
+
+### 1.7 长期事故记忆命令
 
 持久化调查只有在 `stop_reason=completed`、置信度为 medium/high，且报告同时存在 Claim 和 Evidence 时，才会生成 `pending` 记忆。候选不会自动影响新调查：
 
@@ -241,9 +268,9 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 `memory list/search/approve/reject/forget` 都只操作本地 SQLite，不调用模型，不产生 Token 费用。
 
-### 1.7 启动自检与稳定依赖
+### 1.8 启动自检与稳定依赖
 
-`doctor` 是一个完全本地的快速检查：验证 Python 至少为 3.10、五个直接依赖已经安装、`api.env` 能通过格式校验，以及 SQLite 状态库能够打开和自动迁移。它只显示模型名、输出模式和 Runtime 开关，绝不会打印 API Key，也不会创建模型客户端或访问网络。
+`doctor` 是一个完全本地的快速检查：验证 Python 至少为 3.10、五个直接依赖已经安装、`api.env` 和 `harness.json` 能通过校验，以及 SQLite 状态库能够打开和自动迁移。它只显示模型名、输出模式、Runtime 开关、检查数量和清单哈希前缀，绝不会打印 API Key，也不会创建模型客户端或访问网络。
 
 ```powershell
 .\.venv\Scripts\python.exe main.py doctor
@@ -255,7 +282,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 .\.venv\Scripts\python.exe doctor.py
 ```
 
-命令成功时退出码为 0，任一检查失败时退出码为 1，方便用户和自动化脚本可靠判断结果。缺少第三方包时，`doctor.py` 仍会列出全部缺失依赖、基础检查 `api.env` 和 SQLite，而不是跟随主程序一起导入失败。`requirements.lock` 记录 V10.2 完整测试实际使用的直接依赖版本；它不是说其他兼容版本一定不能运行，而是提供一个出现依赖差异时可回退的可重复基线。
+命令成功时退出码为 0，任一检查失败时退出码为 1，方便用户和自动化脚本可靠判断结果。缺少第三方包时，`doctor.py` 仍会列出全部缺失依赖，并对 `api.env`、Harness 清单和 SQLite 做基础检查，而不是跟随主程序一起导入失败。`requirements.lock` 记录当前完整测试实际使用的直接依赖版本；它不是说其他兼容版本一定不能运行，而是提供一个出现依赖差异时可回退的可重复基线。
 
 ## 2. 当前能力与边界
 
@@ -269,8 +296,9 @@ IncidentPilot 可以：
 - 查看有限深度的项目目录；
 - 检索本地 Markdown 知识库；
 - 查看 Git 状态、未提交差异和最近提交；
-- 在显式启用并由用户逐次批准后，复现四个预登记 Demo Case；
-- 保存退出码、标准输出/错误、异常类型和不可伪造的系统 `runtime_id`；
+- 列出项目所有者预登记的安全检查，而不向模型暴露实际 target 或命令；
+- 在显式启用并由用户逐次批准后，运行固定 Demo、`unittest` 或 `pytest` 检查；
+- 保存退出码、预期是否满足、测试计数、失败项、异常摘要和不可伪造的系统 `runtime_id`；
 - 多轮调用工具并保留观察结果；
 - 显式维护可证伪候选假设、支持 Observation、反证和下一步动作；
 - 将下一步动作约束为一个工具、调查目的、支持条件和否定条件；
@@ -317,9 +345,9 @@ IncidentPilot 可以：
 incident-pilot/
 ├── api.env.example             # API 配置模板
 ├── requirements.txt            # Python 依赖
-├── requirements.lock           # V10.2 完整测试通过的直接依赖版本
+├── requirements.lock           # 当前完整测试通过的直接依赖版本
 ├── main.py                     # 传统交互、持久化调查、自检和 Memory 命令
-├── doctor.py                   # Python、依赖、api.env 与 SQLite 本地自检
+├── doctor.py                   # Python、依赖、配置、Harness 与 SQLite 自检
 ├── agent.py                    # Agent 公共接口、图调用与运行指标
 ├── session_agent.py            # 持久化调查的启动、恢复和结果组装
 ├── session_store.py            # SQLiteSaver、会话索引与状态转换
@@ -336,6 +364,8 @@ incident-pilot/
 ├── retrieval.py               # 本地 Markdown RAG
 ├── git_tools.py               # 三个只读 Git 工具
 ├── runtime_tools.py           # 预登记 Demo 执行、超时和 Runtime ID
+├── harness.json                # 项目所有者维护的安全测试清单
+├── harness.py                  # 清单校验、固定 Runner 和结构化测试结果
 ├── .incident_state/           # Checkpoint/会话/Runtime 账本（自动生成）
 ├── tool_profiles.py            # Profile 工具白名单与文档路径隔离
 ├── evaluation.py              # 单案例确定性评分
@@ -350,6 +380,7 @@ incident-pilot/
 │   ├── docs/                   # RAG 专用的规范、Runbook 和事故文档
 │   ├── fixtures/               # Agent 不可见的外部系统模拟器
 │   ├── logs/                   # 可用于提问的简化 traceback
+│   ├── checks/                 # 可由 Harness 运行的公开 Smoke Test
 │   ├── evals/                  # Agent 不可见的标准答案
 │   └── run_case.py             # 四个可执行故障的入口
 ├── test_agent.py
@@ -365,6 +396,7 @@ incident-pilot/
 ├── test_sessions.py           # 重开、恢复和密钥隔离测试
 ├── test_provenance.py
 ├── test_runtime_tools.py
+├── test_harness.py             # Harness 参数、隔离、超时、重放和真实运行测试
 ├── test_tools.py
 ├── README.md                   # 当前版本完整说明
 └── CHANGELOG.md                # 版本演进记录
@@ -382,7 +414,7 @@ incident-pilot/
 
 ## 4. 从输入到报告的完整数据流
 
-V10.2 有两个外层入口：`run_agent()` 使用内存 Checkpoint，适合兼容原调用方；`main.py new/resume` 使用 SQLite Checkpoint 和长期 Memory，适合日常完整调查。两者共用同一张 LangGraph，不存在两套诊断逻辑。持久化入口默认在当前终端处理审批并自动恢复；兼容入口不读写长期记忆，避免旧 API 在无感知情况下改变行为。
+V11 有两个外层入口：`run_agent()` 使用内存 Checkpoint，适合兼容原调用方；`main.py new/resume` 使用 SQLite Checkpoint 和长期 Memory，适合日常完整调查。两者共用同一张 LangGraph，不存在两套诊断逻辑。持久化入口默认在当前终端处理审批并自动恢复；兼容入口不读写长期记忆，避免旧 API 在无感知情况下改变行为。
 
 ```text
 main.py 收集一段完整多行输入
@@ -413,8 +445,8 @@ call_model
         │                                  │                              └── cancel → 取消
         │                                  ├── 硬预算耗尽 → 强制总结
         │                                  └── 仍需调查 → call_model
-        ├── run_demo_case → runtime_review
-        │                   ├── approve → execute_tools → 受限子进程 → Runtime Observation
+        ├── run_demo_case / run_check → runtime_review
+        │                   ├── approve → execute_tools → 固定 Runner → Runtime Observation
         │                   ├── deny → 不执行，生成失败 Observation 后继续
         │                   └── cancel → build_cancelled → END
         │
@@ -433,7 +465,7 @@ main.py 格式化为人类可读文本
 生成 pending Incident Memory 候选，等待用户 approve/reject
 ```
 
-模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具，真正的文件、RAG、Git 和受限 Demo 执行由本地 Python 函数完成。Runtime 调用先经过配置、Profile、人工授权和次数预算，执行函数再使用固定的 Python 模块入口、固定项目目录、无 Shell 的参数数组和超时。工具结果先进入完整 LangGraph 状态并生成系统控制的 Observation；下一次请求不再重发整段 Assistant/Tool 消息，而是发送压缩调查记忆。这样避免悬空的 `tool_call_id`，也避免早期大段工具输出在之后每一轮重复计费。普通调查保留假设引用和最近结果；最终总结、修复则保留所有具有真实来源的成功结果。完整消息、Observation 和假设仍在 Checkpoint 中，可用于验证和审计。
+模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具；真正的文件、RAG、Git 和受限检查由本地 Python 函数完成。V11 中模型先用 `list_checks` 查看公开的检查 ID，再把其中一个 ID 交给 `run_check`；系统重新读取并校验 `harness.json`，自行构造固定参数数组。Runtime 调用仍先经过配置、Profile、人工授权和次数预算，执行层再使用固定项目目录、`shell=False`、最小环境和双重超时上限。工具结果进入完整 LangGraph 状态并生成系统控制的 Observation；下一次请求只发送压缩调查记忆，完整消息、Observation 和假设仍留在 Checkpoint 中供验证与审计。
 
 在持久化模式中，LangGraph 每个超步的状态和 `interrupt()` 待续工作由 `SqliteSaver` 同步写盘。`incident_sessions` 表只是面向 CLI 的索引，保存问题、状态、审批请求和最终结果；图的真正恢复仍由 LangGraph Checkpoint 完成。`resume` 用同一 `thread_id` 和 `Command(resume=...)` 继续，不会把旧问题重新发给一个新 Agent。
 
@@ -479,9 +511,9 @@ main.py 格式化为人类可读文本
 | `runtime_ledger_path / thread_id` | 持久化模式中的账本位置和稳定会话 ID |
 | `recalled_memory_count` | 本次持久化调查实际注入的 approved 历史记忆数量；兼容入口固定为 0 |
 
-`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。V10.2 的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
+`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。V11 的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
 
-每次调查默认生成新 UUID 作为 thread ID，避免不同问题共享状态。兼容函数 `run_agent()` 仍使用 `InMemorySaver`；V10.2 CLI 则使用 `SqliteSaver`，因此关闭原 Python 进程后仍能用相同 thread ID 恢复。这种双入口设计保留旧 API，同时让新 CLI 获得持久性和经过审批的长期记忆。
+每次调查默认生成新 UUID 作为 thread ID，避免不同问题共享状态。兼容函数 `run_agent()` 仍使用 `InMemorySaver`；V11 CLI 则使用 `SqliteSaver`，因此关闭原 Python 进程后仍能用相同 thread ID 恢复。这种双入口设计保留旧 API，同时让新 CLI 获得持久性和经过审批的长期记忆。
 
 ### 5.2 节点
 
@@ -499,7 +531,7 @@ main.py 格式化为人类可读文本
 
 #### `runtime_review`
 
-只有最后一条模型消息请求 `run_demo_case`、Runtime 已启用、交互式 HITL 已开启且本次没有预授权时才进入。节点调用 LangGraph `interrupt()`，把案例 ID、当前模型/工具计数和候选假设写入 Checkpoint，然后等待 `approve`、`deny` 或 `cancel`。批准只覆盖当前这批工具请求；拒绝不会启动进程，执行节点会生成一条可审计的失败 Observation；取消则直接生成取消报告。
+只有最后一条模型消息请求 `run_demo_case` 或 `run_check`、Runtime 已启用、交互式 HITL 已开启且本次没有预授权时才进入。节点调用 LangGraph `interrupt()`，把检查 ID、当前模型/工具计数和候选假设写入 Checkpoint，然后等待 `approve`、`deny` 或 `cancel`。批准只覆盖当前这批工具请求；拒绝不会启动进程，执行节点会生成一条可审计的失败 Observation；取消则直接生成取消报告。
 
 Evaluation 没有人工输入循环，所以必须由操作者同时选择 `full_runtime` 并添加 `--allow-runtime`。该标志会作为本次评测的明确预授权，不会修改 `api.env`。
 
@@ -512,7 +544,7 @@ Evaluation 没有人工输入循环，所以必须由操作者同时选择 `full
 3. `runtime_executions` 表，保存执行型工具的幂等账本；
 4. `incident_memories` 表，保存待审批、已批准或已拒绝的长期事故记忆。
 
-会话状态只能是 `running`、`waiting_for_runtime_approval`、`waiting_for_human_review`、`completed`、`cancelled` 或 `failed`。`start_session()` 先建立会话索引，再以 `durability="sync"` 运行图；遇到 interrupt 就保存审批请求。`resume_session()` 只接受当前审批点允许的动作，然后用 `Command(resume=...)` 恢复。V10.2 的 CLI 在外层循环检查 `pending_review`：正常情况下当场读取用户选择并自动调用 `resume_session()`，如果恢复后再次暂停就继续询问；`Ctrl+C`、EOF 和 `--detach` 只结束 CLI，不删除已经同步保存的状态。
+会话状态只能是 `running`、`waiting_for_runtime_approval`、`waiting_for_human_review`、`completed`、`cancelled` 或 `failed`。`start_session()` 先建立会话索引，再以 `durability="sync"` 运行图；遇到 interrupt 就保存审批请求。`resume_session()` 只接受当前审批点允许的动作，然后用 `Command(resume=...)` 恢复。V11 的 CLI 在外层循环检查 `pending_review`：正常情况下当场读取用户选择并自动调用 `resume_session()`，如果恢复后再次暂停就继续询问；`Ctrl+C`、EOF 和 `--detach` 只结束 CLI，不删除已经同步保存的状态。
 
 Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态导入自定义模块。这样不会因读取被篡改的本地状态而任意实例化 Python 类。`api.env` 和 API Key 不进入 AgentState、会话表或 Runtime 账本；恢复时重新从环境加载客户端配置。
 
@@ -572,7 +604,7 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 max_steps = 8
 ```
 
-它控制允许使用工具的调查轮数。除此以外，V10.2 还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
+它控制允许使用工具的调查轮数。除此以外，V11 还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
 
 LangGraph 框架保险为：
 
@@ -666,20 +698,40 @@ score
 
 Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，输出最多 20,000 字符。它们不会执行提交、重置、切换分支或修改工作区。
 
-### 6.5 Runtime 工具
+### 6.5 V11 Safe Test Harness
 
-`run_demo_case(case_id)` 是唯一会启动子进程的 Agent 工具，`case_id` 只能是：
+V11 有两个 Harness 工具：
+
+| 工具 | 模型可以提供什么 | 作用 |
+|---|---|---|
+| `list_checks()` | 无参数 | 列出检查 ID、Runner、说明、超时和预期退出码；不暴露真实 target 或命令 |
+| `run_check(check_id)` | 仅一个已登记 ID | 运行对应固定检查并返回结构化 Runtime Observation |
+
+安全清单保存在 `harness.json`。每一项包含 `check_id`、`runner`、`target`、`description`、`timeout_seconds` 和 `expected_exit_codes`。当前 Runner 有三种：
+
+- `demo_case`：target 必须属于四个固定故障案例；
+- `unittest`：target 必须是合法的 Python 模块名，不能附加参数；
+- `pytest`：target 必须是仓库内已经存在的 Python 文件或目录，不能越界或使用通配符。
+
+项目默认不额外依赖 `pytest`，因为当前预登记检查只使用 `demo_case` 和标准库 `unittest`。只有你在清单中新增 `pytest` 检查时，才需要在自己的环境中安装 pytest；未安装时会得到结构化的测试失败，而不会回退到 Shell 或自动联网安装。
+
+清单是项目所有者维护的受信配置，不是模型生成的内容。Agent 的文件工具会隐藏 `harness.json`，并且没有写文件工具；模型只能通过 `list_checks` 看见经过裁剪的公开字段。加载清单时还会检查版本、字段、重复 ID、数量、退出码范围、路径边界，以及是否指向 `evals`、`fixtures`、缓存、状态库或 Harness 自身测试等内部区域。模型调用 Schema 只有 `check_id`，即使尝试额外传 `command`、`args`、`path`、`cwd` 或 `env` 也会被严格参数验证拒绝。
+
+真正执行时，系统依据 Runner 构造以下三种参数数组之一：
 
 ```text
-missing_user_id
-schema_mismatch
-connection_leak
-documentation_required
+<current-python> -m demo_app.run_case <固定案例>
+<current-python> -m unittest -q <固定模块>
+<current-python> -m pytest -q <固定仓库内目标>
 ```
 
-参数模型不包含 `command`、`args`、`path` 或工作目录，所以模型没有表达任意执行的通道。实现固定调用当前解释器的 `-m demo_app.run_case <case_id>`，使用参数数组和 `shell=False`，工作目录固定为仓库根目录，子进程只继承启动所需的最小环境变量而不继承 `API_KEY`。输出中的仓库绝对路径会脱敏，最多保留 4,000 字符，并由 `RUNTIME_TIMEOUT_SECONDS` 强制超时。非零退出码代表“故障被成功复现”，工具本身仍返回成功结果；真正的超时或启动错误才是工具失败。
+所有调用都使用 `shell=False`，工作目录固定为仓库根目录，子进程只继承启动所需的最小环境，不继承 `API_KEY`。实际超时取 `harness.json` 的单项超时与 `RUNTIME_TIMEOUT_SECONDS` 的较小值；因此清单写 30 秒而全局上限是 5 秒时，仍会在 5 秒停止。标准输出和错误输出会截断、绝对路径会脱敏，结果统一包含 `exit_code`、`expectation_met`、测试通过/失败数量、失败测试名、异常类型、异常消息、traceback 帧和 Runtime ID。
 
-每次完成的运行由本地系统生成 `runtime-<case>-<随机值>`。这个 `runtime_id` 被写入 Observation 来源；最终 `source_type=runtime` 的 Evidence 必须引用同一个 Observation 和同一个 Runtime ID，模型自己编造的 ID 无法通过 Provenance Validator。
+`expected_exit_codes` 解决了“非零退出码不一定代表 Harness 失败”的问题。例如故障复现案例本来就应该抛出异常并以 1 退出；此时 `exit_code=1` 且 `expectation_met=true`，表示预期故障被成功复现。测试套件通常期望 0。超时或进程无法启动才返回工具级失败。
+
+清单原文和每个检查定义都会计算 SHA-256。幂等账本把检查 ID 与定义哈希共同绑定：同一审批点恢复时，已完成结果直接安全重放；如果项目所有者改变了检查定义，它会成为不同执行对象，不会把旧结果误当作新结果。每次运行生成的 `runtime_id` 被写入 Observation；最终 `source_type=runtime` 的 Evidence 必须引用同一 Observation 和同一 Runtime ID，模型编造的 ID 无法通过来源验证。
+
+旧工具 `run_demo_case(case_id)` 继续保留，避免 V9/V10 的调用方和评测失效；新调查应优先使用 `list_checks` + `run_check`。两种执行工具共用同一个配置开关、`full_runtime` Profile、人工审批节点、Runtime 次数预算、全局超时、指标和 SQLite 幂等账本。
 
 ## 7. 本地 RAG 原理
 
@@ -917,7 +969,7 @@ requires_runtime_evidence
 
 相关文档只有在对应 Evidence 绑定到真实 `retrieve_docs` Observation，并且该 Observation 确实返回了目标文档片段时才计分。仅调用一次 RAG 或猜中文档路径都不算命中。数值型根因标准使用带单位的短语，例如 `10 秒`，避免代码中的“第 10 行”被误判为正确阈值。
 
-引用验证同时检查本地物理位置和本次工具 Observation：文件不仅要存在，模型还必须真正读取过对应行；Git 提交必须真实出现在绑定的 `git_log` 结果中；Runtime ID 必须来自绑定的 `run_demo_case` Observation。
+引用验证同时检查本地物理位置和本次工具 Observation：文件不仅要存在，模型还必须真正读取过对应行；Git 提交必须真实出现在绑定的 `git_log` 结果中；Runtime ID 必须来自绑定的 `run_demo_case` 或 `run_check` Observation。
 
 ### 10.3 运行指标
 
@@ -965,7 +1017,7 @@ AgentRunResult
 
 普通 `run_agent()` 仍然只返回 `IncidentReport`，保持现有调用方兼容。
 
-## 11. V10.2 工具消融、Runtime Evidence、成本与稳定性实验
+## 11. V11 工具消融、Runtime Evidence、成本与稳定性实验
 
 ### 11.1 四种 Profile
 
@@ -974,7 +1026,7 @@ AgentRunResult
 | `code_only` | 三个文件工具；不能直接看到 RAG 文档 | 验证只看代码和日志是否足够 |
 | `code_rag` | 文件工具 + RAG；文档只能经 RAG 获取 | 测量项目文档的贡献 |
 | `full` | 文件工具 + RAG + Git；文档只能经 RAG 获取 | 测量 Git 上下文的额外贡献 |
-| `full_runtime` | `full` + 预登记 Runtime 工具 | 调查需要真实复现证据的案例 |
+| `full_runtime` | `full` + `list_checks`、`run_check` 和兼容 `run_demo_case` | 调查需要真实复现或测试证据的案例 |
 
 Profile 使用三层基础限制：模型只收到允许的工具 Schema，执行节点拒绝白名单外调用，文件工具再实施路径级隔离。启用任一 Profile 后，所有 Markdown 都不会出现在 `list_files` 和 `search_code` 结果中，`read_file` 也会拒绝直接读取；RAG Profile 必须调用 `retrieve_docs` 获取已建立索引的 `knowledge/` 与 `demo_app/docs/` 文档。`demo_app/fixtures/` 对所有 Agent Profile 都不可见。
 
@@ -1132,13 +1184,16 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 124 项测试，覆盖：
+当前共有 135 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
 - 路径越界、敏感配置和内部目录隔离；
 - 文件、RAG 和 Git 工具；
-- Runtime 工具白名单、严格参数、固定入口、结构化超时、环境密钥隔离和无 Shell 执行；
+- Runtime/Harness 工具白名单、严格参数、固定 Runner、结构化超时、环境密钥隔离和无 Shell 执行；
+- Harness 清单重复 ID、未知 ID、路径越界、内部评测目标与模型自带命令字段的拒绝；
+- `unittest` 结果计数、失败用例提取、预期非零退出码和真实 Runtime Observation；
+- `run_check` 人工审批、恢复执行、定义哈希绑定与幂等安全重放；
 - Runtime 摘要优先保留异常消息与业务 traceback 帧，长堆栈不会挤掉根因线索；
 - LangGraph 路由、报告重试、预算和强制总结；
 - 内部假设工具的格式、ID、成功 Observation 与状态约束；
@@ -1158,7 +1213,7 @@ ExperimentRun
 - 当前终端可以处理审批并自动恢复，连续 interrupt 不要求用户重复复制调查 ID；
 - `Ctrl+C` 或 EOF 不会误执行审批，等待状态仍可在新进程中恢复；
 - V10 数据库自动增加 Memory 召回字段，不需要清空已有会话；
-- `doctor` 在不联网的情况下检查依赖、配置和 SQLite，且不会输出 API Key；
+- `doctor` 在不联网的情况下检查依赖、配置、Harness 清单和 SQLite，且不会输出 API Key；
 - 同一 Runtime `execution_id` 只执行一次，已完成时重放结果，不确定时拒绝重跑；
 - API Key 不写入持久化 SQLite，`.incident_state` 不向 Agent 文件工具暴露；
 - 只有正常完成且证据引用完整的 medium/high 报告才生成 `pending` Memory；
@@ -1202,7 +1257,7 @@ ExperimentRun
 
 ### 13.2 调查与执行边界
 
-文件、RAG 和 Git 工具都是只读的。Runtime 工具会启动一个本地子进程，但不接受模型提供的命令、路径或任意参数，只能选择预登记 Case；它还受默认关闭的环境开关、独立 Profile、交互式单次审批、调用次数、超时和持久幂等账本共同约束。Git 工具和 Runtime 工具都不通过 Shell 拼接命令，文件工具不提供写入，系统提示也明确禁止修改。Evaluation 在 `.incident_reports/` 写报告，RAG 在 `.incident_cache/` 写缓存，持久化 CLI 在 `.incident_state/` 写状态；这些属于本地基础设施，不是模型可调用的业务写入工具。
+文件、RAG、Git 和 `list_checks` 都是只读的。Runtime 工具会启动一个本地子进程，但模型只能选择预登记 ID，不能提供命令、路径、参数、工作目录或环境变量；清单 target 还会经过 Runner 专用校验。执行受默认关闭的环境开关、独立 Profile、交互式单次审批、调用次数、双重超时和持久幂等账本共同约束。Git 工具和 Runtime 工具都不通过 Shell 拼接命令，文件工具不提供写入，系统提示也明确禁止修改。Evaluation 在 `.incident_reports/` 写报告，RAG 在 `.incident_cache/` 写缓存，持久化 CLI 在 `.incident_state/` 写状态；这些属于本地基础设施，不是模型可调用的业务写入工具。
 
 ### 13.3 外部模型数据边界
 
@@ -1273,7 +1328,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ### Agent 调用了很多工具
 
-一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。V10.2 默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
+一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。V11 默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
 
 ### Evaluation 为什么提示费用保护
 
@@ -1338,7 +1393,7 @@ ModuleNotFoundError: No module named 'langgraph'
 - Memory 召回使用可解释词法相似度，没有 Embedding、向量数据库或学习型重排；表达完全不同但语义相同的事故可能无法命中；
 - 已批准的历史仍可能过时或错误，因此只能作为候选假设，必须在当前调查中重新取证；
 - 外部子进程与 SQLite 不能组成单个原子事务；崩溃留下的 `running` Runtime 操作需要人工处理；
-- Runtime 只覆盖本仓库四个固定 Demo Case，不是通用沙箱，不能执行任意测试命令；
+- Harness 只覆盖 `harness.json` 中预登记的本仓库检查，不是容器或通用沙箱；编辑清单等同于授予新的本地测试能力，必须由项目所有者审查；
 - Runtime 批准按当前模型工具请求生效，默认预算只允许实际运行一次；尚未实现风险等级和审批策略引擎；
 - 没有补丁生成、人工批准写入、修复后测试和回滚；
 - 没有 Web UI 或服务端 API。
@@ -1348,12 +1403,11 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 将 V10.2 作为稳定基线：先运行 `doctor`，再手工验收一次当场审批、一次关闭终端后恢复和一次 Memory 召回；
-2. V11 把固定 Demo Runner 扩展为隔离的测试 Harness，但仍由命令模板白名单决定，不开放任意 Shell；
-3. V12 增加“只生成补丁、不写入”的 Patch Proposal 和差异审查；
-4. V13 再增加独立写入审批、临时工作区应用、测试验证和失败回滚；
-5. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用和多模型对比；
-6. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库。
+1. 将 V11 作为新的稳定基线：先运行 `doctor`，再手工验收一次 Harness 审批、一次关闭终端后恢复和一次 Memory 召回；
+2. V12 增加“只生成补丁、不写入”的 Patch Proposal 和差异审查；
+3. V13 再增加独立写入审批、临时工作区应用、Harness 验证和失败回滚；
+4. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用和多模型对比；
+5. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库。
 
 系统把可持久的 Human-in-the-loop 放在第一个执行型工具之前，又把另一类人工审批用于长期知识进入召回池之前。将来增加任何写入能力时，不能复用这两类批准，而要建立独立的补丁审批门。
 
@@ -1361,11 +1415,11 @@ ModuleNotFoundError: No module named 'langgraph'
 
 一句话：
 
-> IncidentPilot 是一个基于 LangGraph 的成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。执行型 Runtime 在工具运行前由 interrupt 请求批准，SQLite Checkpoint 支持跨进程恢复，持久幂等账本避免恢复时重复执行。成功事故可以沉淀为人工审批的长期记忆，但召回历史只能引导假设，必须用当前代码、文档、Git 或 Runtime 重新取证。V10.2 将底层 resume 封装为当前终端自动恢复，并用本地自检与依赖基线提高可重复性。
+> IncidentPilot 是一个基于 LangGraph 的成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。V11 的 Safe Test Harness 让模型只能选择人工预登记的检查 ID，由系统构造固定 Runner 命令；执行前由 interrupt 请求批准，SQLite Checkpoint 支持跨进程恢复，定义哈希和幂等账本避免误用旧结果或重复执行。成功事故可以沉淀为人工审批的长期记忆，但历史仍必须用当前代码、文档、Git 或 Runtime 重新取证。
 
 完整流程：
 
-> 用户提交完整 traceback 后，持久化入口先在本地召回最多三条已审批相似事故，并明确标为非证据线索。模型通过内部控制工具保存候选 Hypothesis，为未确认假设声明可证伪的下一步动作，每轮只执行有限数量的高信息价值工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。若需要真实复现，`run_demo_case` 请求先进入 `runtime_review`，SQLite Checkpoint 在执行前同步持久化 interrupt；用户可在另一进程中批准，幂等账本再决定是真正执行、返回旧结果还是因结果不确定而拒绝重跑。系统拒绝不存在、失败、伪造或来自历史 Memory 的 Evidence；confirmed 假设必须获得至少两项独立来源才触发早停。最终 Claim—Evidence Ledger 经过 Pydantic 和 Provenance 双重验证，合格报告才生成待审批 Memory。Evaluation 同时衡量准确性、证据落地、Runtime 使用、历史召回、上下文压缩、Token、工具贡献和稳定性。
+> 用户提交完整 traceback 后，持久化入口先在本地召回最多三条已审批相似事故，并明确标为非证据线索。模型通过内部控制工具保存候选 Hypothesis，为未确认假设声明可证伪的下一步动作，每轮只执行有限数量的高信息价值工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。若需要真实复现，模型先用 `list_checks` 发现能力，再用 `run_check(check_id)` 请求固定检查并进入 `runtime_review`，SQLite Checkpoint 在执行前同步持久化 interrupt；用户批准后，系统从受信清单构造 Runner 参数，幂等账本再决定是真正执行、返回旧结果还是因结果不确定而拒绝重跑。系统拒绝不存在、失败、伪造或来自历史 Memory 的 Evidence；confirmed 假设必须获得至少两项独立来源才触发早停。最终 Claim—Evidence Ledger 经过 Pydantic 和 Provenance 双重验证，合格报告才生成待审批 Memory。Evaluation 同时衡量准确性、证据落地、Runtime 使用、历史召回、上下文压缩、Token、工具贡献和稳定性。
 
 ## 19. 文档维护规则
 

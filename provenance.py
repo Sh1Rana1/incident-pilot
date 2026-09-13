@@ -1,4 +1,4 @@
-"""V9 工具 Observation 提取与代码、文档、Git、Runtime 来源验证。"""
+"""V11 工具 Observation 提取与代码、文档、Git、Harness Runtime 来源验证。"""
 
 import hashlib
 import json
@@ -87,7 +87,7 @@ def extract_observed_sources(tool_name: str, result_payload: dict[str, Any]) -> 
             for item in data.get("chunks", [])
             if item.get("source")
         ]
-    if tool_name == "run_demo_case" and data.get("run_id"):
+    if tool_name in {"run_demo_case", "run_check"} and data.get("run_id"):
         return [ObservedSource(
             source_type="runtime",
             runtime_id=data["run_id"],

@@ -13,6 +13,40 @@
 
 ---
 
+## V11：Safe Test Harness（安全测试执行框架）
+
+### 新增
+
+- 新增 `harness.json`，由项目所有者预登记允许执行的检查。每项固定声明 ID、Runner、target、说明、超时和预期退出码。
+- 新增 `harness.py` 与 `list_checks()`、`run_check(check_id)`：模型只能发现并选择检查 ID，不能传入命令、参数、路径、工作目录或环境变量。
+- 支持 `demo_case`、标准库 `unittest` 和可选 `pytest` 三种固定 Runner；默认清单包含四个故障复现和一个公开 Smoke Test，不新增必装依赖。
+- 新增结构化测试结果：实际/预期退出码、`expectation_met`、通过/失败数量、失败测试名、异常类型、异常消息、traceback 帧、截断输出和 Runtime ID。
+- `doctor` 新增 Harness 清单检查；即使第三方依赖缺失，也会用标准库执行基础 JSON、版本和非空检查。
+
+### 控制流与证据
+
+- `run_check` 接入现有 LangGraph `runtime_review`：执行前使用原生 interrupt 请求单次人工批准，拒绝时不启动进程，批准后从原 Checkpoint 恢复。
+- `run_check` 与兼容工具 `run_demo_case` 共用 Runtime 配置开关、`full_runtime` Profile、调用预算、全局超时、运行指标、Runtime Provenance 和 SQLite 幂等账本。
+- 来源提取器接受 `run_check` 生成的系统 `run_id`；报告中的 Runtime Evidence 仍必须与真实成功 Observation 精确绑定。
+- Agent 提示词优先要求先 `list_checks` 再 `run_check`；旧 `run_demo_case` 保留，现有调用方和 V9/V10 Evaluation 不需要迁移。
+
+### 安全与一致性
+
+- 清单使用严格 Pydantic Schema，拒绝未知字段、重复 ID、非法退出码、过长超时和不受支持的 Runner。
+- Agent 文件工具隐藏 `harness.json`；`unittest` 只接受无参数的点分模块名；`pytest` 只接受仓库内现有目标，拒绝越界、通配符、敏感目录、评测目录、外部系统夹具和 Harness 内部测试。
+- 命令完全由系统使用当前 Python 构造，固定工作目录、`shell=False` 和最小环境；API Key 不进入测试进程。
+- 实际超时取清单值和全局 `RUNTIME_TIMEOUT_SECONDS` 的较小值，项目清单不能放宽管理员设置的硬上限。
+- 清单原文与单项定义分别计算 SHA-256；幂等键包含检查定义哈希，配置变化后不会错误重放旧检查结果。
+- 非零退出码不再直接等同失败：故障复现可把 1 声明为预期，普通测试则通常要求 0，以 `expectation_met` 表达检查语义。
+
+### 文档与验证
+
+- README 已同步为 V11 当前实现，新增 Harness 配置、完整安全边界、执行原理、无 Token 测试方式、面试讲法和 V12–V14 规划。
+- 新增 Harness 参数隔离、未知 ID、清单校验、固定 argv、最小环境、双重超时、测试结果解析、幂等重放、真实故障复现和 Graph 审批恢复测试。
+- 135 项离线测试全部通过；未调用真实模型 API，未产生 Token 费用。
+
+---
+
 ## V10.2 Stable：交互收口、启动自检与可重复基线
 
 ### 交互稳定性
