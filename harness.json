@@ -7,7 +7,9 @@
       "target": "missing_user_id",
       "description": "复现用户请求缺少 user_id 的 Demo 故障",
       "timeout_seconds": 5,
-      "expected_exit_codes": [1]
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/api.py", "demo_app/app/service.py"]
     },
     {
       "check_id": "demo_schema_mismatch",
@@ -15,7 +17,9 @@
       "target": "schema_mismatch",
       "description": "复现代码与数据库 Schema 不一致的 Demo 故障",
       "timeout_seconds": 5,
-      "expected_exit_codes": [1]
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/repository.py"]
     },
     {
       "check_id": "demo_connection_leak",
@@ -23,7 +27,9 @@
       "target": "connection_leak",
       "description": "复现连接未释放导致连接池耗尽的 Demo 故障",
       "timeout_seconds": 5,
-      "expected_exit_codes": [1]
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/worker.py", "demo_app/app/pool.py"]
     },
     {
       "check_id": "demo_documentation_required",
@@ -31,7 +37,9 @@
       "target": "documentation_required",
       "description": "复现 Webhook 配置违反供应商契约的 Demo 故障",
       "timeout_seconds": 5,
-      "expected_exit_codes": [1]
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/webhook.py"]
     },
     {
       "check_id": "demo_smoke_suite",
@@ -39,7 +47,19 @@
       "target": "demo_app.checks.test_smoke",
       "description": "运行不包含 Evaluation 标准答案的 Demo 基础 Smoke Test",
       "timeout_seconds": 30,
-      "expected_exit_codes": [0]
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": []
+    },
+    {
+      "check_id": "api_missing_fields_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.api_contract_check",
+      "description": "验证 POST /users 缺少必填字段时返回 400、不调用 Service，完整请求仍返回 201",
+      "timeout_seconds": 10,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/api.py"]
     }
   ]
 }

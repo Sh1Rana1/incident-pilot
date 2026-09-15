@@ -31,6 +31,10 @@ INTERNAL_ONLY_FILES = {
     "test_demo_app.py",
     "test_runtime_tools.py",
     "test_harness.py",
+    "patching.py",
+    "patch_verification.py",
+    "test_patching.py",
+    "test_patch_verification.py",
 }
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}

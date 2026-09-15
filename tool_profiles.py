@@ -1,4 +1,4 @@
-"""V11 工具 Profile：同时限制工具集合、Harness 运行能力和数据范围。"""
+"""V12.1.1 工具 Profile：限制工具集合、Harness 运行能力和数据范围。"""
 
 from contextvars import ContextVar, Token
 from pathlib import PurePosixPath

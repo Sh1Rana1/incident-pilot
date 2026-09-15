@@ -1,4 +1,4 @@
-"""V11 命令行入口：持久会话、当场审批与 Safe Test Harness。"""
+"""V13 命令行入口：持久调查、补丁提案与隔离验证。"""
 
 import argparse
 import sys
@@ -6,7 +6,13 @@ from collections.abc import Callable
 
 from agent import run_agent
 from doctor import print_doctor_report, run_doctor
-from models import HumanReviewRequest, IncidentMemory, IncidentReport
+from models import (
+    HumanReviewRequest,
+    IncidentMemory,
+    IncidentReport,
+    PatchProposal,
+    PatchVerificationResult,
+)
 from session_agent import resume_session, start_session
 from session_store import SessionRecord, SessionStore
 
@@ -66,6 +72,51 @@ def format_report(report: IncidentReport) -> str:
     )
 
 
+def format_patch_proposal(proposal: PatchProposal) -> str:
+    checks = ", ".join(proposal.verification_check_ids)
+    risks = "\n".join(
+        f"{index}. {risk}" for index, risk in enumerate(proposal.risks, 1)
+    ) or "无"
+    errors = "\n".join(
+        f"- {error}" for error in proposal.validation_errors
+    ) or "无"
+    return (
+        f"提案 ID：{proposal.proposal_id}\n"
+        f"本地验证状态：{proposal.status}\n"
+        f"对应诊断 Claim：{', '.join(proposal.diagnosis_claim_ids)}\n"
+        f"涉及文件：{', '.join(proposal.changed_files)}\n"
+        f"理由：{proposal.rationale}\n"
+        f"风险：\n{risks}\n"
+        f"建议验证检查：{checks}\n"
+        f"验证错误：\n{errors}\n\n"
+        "Unified diff（只读，尚未应用）：\n"
+        f"{proposal.unified_diff}"
+    )
+
+
+def format_patch_verification(result: PatchVerificationResult) -> str:
+    runs = []
+    for item in result.check_runs:
+        exit_code = "无" if item.exit_code is None else str(item.exit_code)
+        runs.append(
+            f"- [{item.phase}] {item.check_id} ({item.purpose}): "
+            f"exit={exit_code}, expectation_met={item.expectation_met}, "
+            f"success={item.success_criterion_met}"
+            + (f"，错误={item.error}" if item.error else "")
+        )
+    errors = "\n".join(f"- {item}" for item in result.validation_errors) or "无"
+    return (
+        f"提案 ID：{result.proposal_id}\n"
+        f"验证状态：{result.status}\n"
+        f"仅在隔离副本应用：{result.applied_in_sandbox}\n"
+        f"正式工作区未变化：{result.workspace_unchanged}\n"
+        f"临时目录已清理：{result.sandbox_cleaned}\n"
+        f"实际检查：{', '.join(result.required_check_ids) or '无'}\n"
+        f"检查结果：\n{chr(10).join(runs) or '无'}\n"
+        f"失败原因：\n{errors}"
+    )
+
+
 def request_human_review(
     request: HumanReviewRequest,
     input_fn: InputFunction = input,
@@ -84,7 +135,7 @@ def request_human_review(
         print("当前已确认假设：")
         for item in confirmed:
             print(f"- {item.hypothesis_id}: {item.statement} ({item.confidence:.0%})")
-    if request.reason == "runtime_execution":
+    if request.reason in {"runtime_execution", "patch_verification"}:
         choices = {
             "1": "approve", "2": "deny", "3": "cancel",
             "approve": "approve", "deny": "deny", "cancel": "cancel",
@@ -121,6 +172,20 @@ def _print_session(record: SessionRecord) -> None:
             f"{metrics.runtime_call_count} 次成功，"
             f"安全重放 {metrics.runtime_replay_count} 次。"
         )
+        if record.result.patch_proposal is not None:
+            print(
+                "\n=== V13 Patch Proposal ===\n"
+                + format_patch_proposal(record.result.patch_proposal)
+            )
+        elif record.result.metrics.patch_requested:
+            print("\n补丁提案未生成：")
+            for error in record.result.patch_validation_errors:
+                print(f"- {error}")
+        if record.result.patch_verification is not None:
+            print(
+                "\n=== V13 Patch Sandbox Verification ===\n"
+                + format_patch_verification(record.result.patch_verification)
+            )
     elif record.pending_review is not None:
         print(f"等待操作：{record.pending_review.message}")
         print(f"稍后继续：{CLI_PREFIX} resume {record.thread_id}")
@@ -130,7 +195,7 @@ def _print_session(record: SessionRecord) -> None:
 
 def _legacy_main() -> None:
     """保留 V9 的单进程使用方式，避免破坏原有习惯和调用方。"""
-    print("IncidentPilot V11 · Safe Test Harness LangGraph（输入 exit 退出）")
+    print("IncidentPilot V13 · Patch Sandbox Verification（输入 exit 退出）")
     while True:
         try:
             question = read_multiline_question()
@@ -184,13 +249,22 @@ def _continue_pending_reviews(
     return record
 
 
-def _new_session(detach: bool = False) -> None:
+def _new_session(
+    detach: bool = False,
+    generate_patch_proposal: bool = False,
+    verify_patch_proposal: bool = False,
+) -> None:
     question = read_multiline_question()
     if not question:
         print("未提供问题，已取消。")
         return
     with SessionStore() as store:
-        record = start_session(store, question)
+        record = start_session(
+            store,
+            question,
+            generate_patch_proposal=generate_patch_proposal,
+            verify_patch_proposal=verify_patch_proposal,
+        )
         if not detach:
             record = _continue_pending_reviews(store, record)
         _print_session(record)
@@ -272,13 +346,26 @@ def _memory_command(args: argparse.Namespace) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="IncidentPilot V11 Safe Test Harness")
+    parser = argparse.ArgumentParser(description="IncidentPilot V13 Patch Sandbox Verification")
     commands = parser.add_subparsers(dest="command", required=True)
     new_parser = commands.add_parser("new", help="创建调查并当场处理审批")
     new_parser.add_argument(
         "--detach",
         action="store_true",
         help="遇到审批时保存并退出，稍后手工 resume",
+    )
+    new_parser.add_argument(
+        "--with-patch",
+        action="store_true",
+        help="诊断通过后额外生成并校验只读补丁提案；会增加一次模型调用",
+    )
+    new_parser.add_argument(
+        "--verify-patch",
+        action="store_true",
+        help=(
+            "生成补丁后请求一次批准，在临时隔离副本应用并运行预登记检查；"
+            "正式工作区不修改"
+        ),
     )
     list_parser = commands.add_parser("list", help="列出最近调查")
     list_parser.add_argument("--limit", type=int, default=20)
@@ -306,7 +393,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """无参数保留传统模式；显式子命令使用 V11 持久化入口。"""
+    """无参数保留传统模式；显式子命令使用 V13 持久化入口。"""
     args_list = [] if argv is None else argv
     if not args_list:
         _legacy_main()
@@ -314,7 +401,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(args_list)
     try:
         if args.command == "new":
-            _new_session(detach=args.detach)
+            _new_session(
+                detach=args.detach,
+                generate_patch_proposal=args.with_patch or args.verify_patch,
+                verify_patch_proposal=args.verify_patch,
+            )
         elif args.command == "list":
             if args.limit < 1:
                 raise ValueError("--limit 必须大于等于 1")

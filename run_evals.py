@@ -1,4 +1,4 @@
-"""运行真实模型的 V11 Runtime、Memory、成本与稳定性实验。"""
+"""运行真实模型的 V12.1.1 Runtime、Memory、成本与稳定性实验。"""
 
 import argparse
 from datetime import datetime
@@ -123,7 +123,7 @@ def format_summary(result: ExperimentRun) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="运行 IncidentPilot V11 Runtime/Memory 与稳定性实验（会调用真实模型）"
+        description="运行 IncidentPilot V12.1.1 Runtime/Memory 与稳定性实验（会调用真实模型）"
     )
     parser.add_argument(
         "--case",

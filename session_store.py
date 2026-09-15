@@ -1,4 +1,4 @@
-"""V11 本地持久化：Checkpoint、会话目录与长期事故记忆。"""
+"""V12.1.1 本地持久化：Checkpoint、会话、补丁提案与事故记忆。"""
 
 import json
 import sqlite3
@@ -29,6 +29,7 @@ DEFAULT_DATABASE_PATH = DEFAULT_STATE_DIR / "incident_pilot.sqlite3"
 SessionStatus = Literal[
     "running",
     "waiting_for_runtime_approval",
+    "waiting_for_patch_approval",
     "waiting_for_human_review",
     "completed",
     "cancelled",
@@ -212,11 +213,12 @@ class SessionStore:
         thread_id: str,
         request: HumanReviewRequest,
     ) -> SessionRecord:
-        status: SessionStatus = (
-            "waiting_for_runtime_approval"
-            if request.reason == "runtime_execution"
-            else "waiting_for_human_review"
-        )
+        if request.reason == "runtime_execution":
+            status: SessionStatus = "waiting_for_runtime_approval"
+        elif request.reason == "patch_verification":
+            status = "waiting_for_patch_approval"
+        else:
+            status = "waiting_for_human_review"
         with self.connection:
             self.connection.execute(
                 """

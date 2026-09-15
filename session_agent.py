@@ -1,4 +1,4 @@
-"""V11 可跨进程恢复、可召回已批准历史线索的会话编排。"""
+"""V13 可恢复会话、历史召回、补丁提案与隔离验证编排。"""
 
 from time import perf_counter
 from uuid import uuid4
@@ -13,6 +13,8 @@ from models import (
     DiagnosticHypothesis,
     HumanReviewRequest,
     IncidentReport,
+    PatchProposal,
+    PatchVerificationResult,
     RunMetrics,
     ToolObservation,
 )
@@ -63,6 +65,8 @@ def _initial_state(
     ledger_path: str,
     memory_context: str = "",
     recalled_memory_count: int = 0,
+    generate_patch_proposal: bool = False,
+    verify_patch_proposal: bool = False,
 ) -> dict:
     return {
         "messages": [
@@ -115,6 +119,14 @@ def _initial_state(
         "runtime_ledger_path": ledger_path,
         "thread_id": thread_id,
         "recalled_memory_count": recalled_memory_count,
+        "patch_requested": generate_patch_proposal or verify_patch_proposal,
+        "patch_attempted": False,
+        "patch_proposal": None,
+        "patch_validation_errors": [],
+        "patch_verification_requested": verify_patch_proposal,
+        "patch_verification_decision": None,
+        "patch_verification_approval_count": 0,
+        "patch_verification": None,
     }
 
 
@@ -140,6 +152,16 @@ def _result_from_state(
         for item in state.get("hypotheses", [])
     ]
     report = IncidentReport.model_validate(state["report"])
+    patch_proposal = (
+        PatchProposal.model_validate(state["patch_proposal"])
+        if state.get("patch_proposal")
+        else None
+    )
+    patch_verification = (
+        PatchVerificationResult.model_validate(state["patch_verification"])
+        if state.get("patch_verification")
+        else None
+    )
     referenced_ids = {
         observation_id
         for hypothesis in hypotheses
@@ -205,6 +227,23 @@ def _result_from_state(
             runtime_denial_count=state.get("runtime_denial_count", 0),
             runtime_replay_count=state.get("runtime_replay_count", 0),
             recalled_memory_count=state.get("recalled_memory_count", 0),
+            patch_requested=state.get("patch_requested", False),
+            patch_proposal_generated=patch_proposal is not None,
+            patch_proposal_valid=bool(
+                patch_proposal and patch_proposal.status == "validated"
+            ),
+            patch_verification_requested=state.get(
+                "patch_verification_requested", False
+            ),
+            patch_verification_approval_count=state.get(
+                "patch_verification_approval_count", 0
+            ),
+            patch_verification_check_count=(
+                len(patch_verification.check_runs) if patch_verification else 0
+            ),
+            patch_verified=bool(
+                patch_verification and patch_verification.status == "verified"
+            ),
             tool_names=tool_names,
             stop_reason=state.get("stop_reason") or "unknown",
             duration_ms=round(duration_ms, 2),
@@ -212,6 +251,9 @@ def _result_from_state(
         observations=observations,
         hypotheses=hypotheses,
         validation_errors=state.get("validation_errors", []),
+        patch_proposal=patch_proposal,
+        patch_validation_errors=state.get("patch_validation_errors", []),
+        patch_verification=patch_verification,
     )
 
 
@@ -239,6 +281,8 @@ def start_session(
     question: str,
     tool_profile: str = "full_runtime",
     thread_id: str | None = None,
+    generate_patch_proposal: bool = False,
+    verify_patch_proposal: bool = False,
 ) -> SessionRecord:
     resolved_thread_id = thread_id or str(uuid4())
     client, config = create_client()
@@ -273,6 +317,8 @@ def start_session(
         str(store.database_path),
         memory_context=format_memory_context(recalled),
         recalled_memory_count=len(recalled),
+        generate_patch_proposal=generate_patch_proposal,
+        verify_patch_proposal=verify_patch_proposal,
     )
     started = perf_counter()
     try:

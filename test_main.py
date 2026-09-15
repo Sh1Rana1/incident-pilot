@@ -10,9 +10,13 @@ from models import HumanReviewRequest, IncidentReport
 
 class MultilineInputTests(unittest.TestCase):
     def test_new_parser_supports_detached_mode_and_doctor(self) -> None:
-        detached = main._build_parser().parse_args(["new", "--detach"])
+        detached = main._build_parser().parse_args(
+            ["new", "--detach", "--with-patch", "--verify-patch"]
+        )
         doctor = main._build_parser().parse_args(["doctor"])
         self.assertTrue(detached.detach)
+        self.assertTrue(detached.with_patch)
+        self.assertTrue(detached.verify_patch)
         self.assertEqual(doctor.command, "doctor")
 
     @patch("main.resume_session")

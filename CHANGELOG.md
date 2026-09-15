@@ -13,6 +13,122 @@
 
 ---
 
+## V13：Patch Sandbox Verification（隔离补丁验证）
+
+### 新增
+
+- CLI 新增 `main.py new --verify-patch`；该参数自动启用 Patch Proposal，并在提案通过本地结构校验后进入独立验证审批。原 `--with-patch` 继续只生成只读提案。
+- 新增 `patch_verification.py`：重新校验 proposal ID 与当前文件上下文，把项目安全子集复制到系统临时目录，在副本中运行基线、应用 unified diff、运行补丁后检查并清理目录。
+- 新增结构化 `PatchCheckRun` 与 `PatchVerificationResult`，保存每个检查的阶段、用途、退出码、成功条件、测试计数、失败项、输出摘要、超时、错误与耗时。
+- Harness 检查新增 `purpose=reproduction|regression` 和 `covers_files`。系统自动合并模型建议项、所有覆盖修改文件的检查和全局回归检查；修改文件没有任何覆盖声明时拒绝验证。
+- 新增 `api_missing_fields_contract`，验证缺少 `user_id` 或 `email` 时 API 返回 400 且不调用 Service，完整 payload 仍返回 201。
+- 持久化会话新增 `waiting_for_patch_approval`，终端会在任何临时写入和检查执行前显示本次 proposal 与实际检查 ID。
+
+### 判定语义
+
+- `reproduction` 检查在补丁前必须命中预期故障；补丁后必须以 0 退出且不再命中旧故障退出码。
+- `regression` 检查只以补丁后是否满足清单中的预期退出码判定。基线结果仍会记录，便于比较。
+- `validated` 只表示候选 diff 的结构、范围、Claim/Evidence 与当前上下文合法；`verified` 才表示本次临时副本中的基线、应用和补丁后检查全部满足规则。
+- 把 `KeyError` 替换成 `ValueError` 但没有落实“返回 HTTP 400 且不调用 Service”的补丁，会被契约检查判为 `failed`。
+
+### 安全与成本
+
+- 正式工作区永不应用候选补丁；系统在验证前后比较目标文件 SHA-256，并在结果中记录 `workspace_unchanged` 与 `sandbox_cleaned`。
+- 临时复制排除 `.git`、`.venv`、API 密钥、缓存、评测报告、SQLite 状态和所有符号链接。候选 diff 仍不能修改测试、Harness、Evaluation、配置、Fixture 或内部基础设施。
+- 补丁审批与费用审批、Runtime 工具审批、Memory 审批彼此独立。拒绝或取消时不创建临时目录、不启动子进程。
+- 验证只运行项目所有者预登记的固定 Runner，使用 `shell=False`、固定工作目录、最小环境和全局超时；模型不能提供命令、参数或环境变量。
+- `--verify-patch` 相对 `--with-patch` 不增加模型调用或 Token；新增成本仅为本地文件复制和基线/补丁后 Harness 时间。
+- 当前隔离是临时工作区隔离，不是容器或操作系统安全沙箱；已登记检查必须来自可信项目代码。
+
+### 兼容性与验证
+
+- 普通诊断、Evaluation、`--with-patch` 和旧 Python API 默认行为不变；只有显式 `verify_patch_proposal=True` 或 `--verify-patch` 才进入新路径。
+- `HarnessCheck` 新字段带兼容默认值，旧清单仍可加载；现有 Demo 项已补充明确的复现语义和文件覆盖声明。
+- 新增隔离应用、正确补丁通过、错误异常替换被拒绝、正式工作区保护、Graph interrupt/resume、CLI 参数和会话状态测试。
+- 155 项离线测试与 `doctor` 全部通过；未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V12.1.1：最终报告落地与补丁跳过原因修复
+
+### 修复
+
+- 为强制总结和最后一次格式修复请求加入由 `IncidentReport.model_json_schema()` 实时生成的严格 Schema，明确禁止 `gaps` 等额外字段，并强调 `suggested_fixes` 必须是字符串数组。
+- 每次最终输出同时提供本次成功 Observation 及其真实来源白名单；模型只能复制其中的 `observation_id`、文件、行号、Commit 或 Runtime ID，减少修复阶段编造和错配 Evidence。
+- 明确区分 Evidence ID 与 Observation ID：模型创建 `E1/E2` 后，Claim 只能引用最终 Evidence 数组中确实存在的 ID，不能引用被省略的 Evidence。
+- 当报告经过两次尝试仍只能生成 `invalid_synthesis` 降级报告时，显式记录 Patch Proposal 因前置验证失败而跳过，不再显示空白的“补丁提案未生成”。
+
+### 安全与成本
+
+- 降级报告即使具有 high 置信度，也不能进入补丁节点；会明确说明安全跳过原因。
+- 没有增加新的模型调用或格式重试。Schema 与来源白名单只附加到本来就会发生的总结/修复请求，目标是减少昂贵的修复调用。
+- Pydantic、Hypothesis Readiness、Provenance 与 Patch 校验规则保持严格，没有把失败的模型报告自动标记为正常完成。
+
+### 文档与验证
+
+- README 已同步为 V12.1.1，解释报告 Schema、Observation 白名单以及降级报告为什么不能生成补丁。
+- 新增报告契约测试，并扩展总结、修复和降级路径的 Graph 测试。
+- 147 项离线测试全部通过；未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V12.1：DeepSeek Patch Schema 兼容性修复
+
+### 修复
+
+- 修复只支持 `response_format={"type":"json_object"}` 的模型虽然返回合法 JSON，却自行生成 `type`、`patch_id`、`objective`、`reasoning`、`status` 等字段，导致严格 `PatchProposalDraft` 校验失败的问题。
+- 补丁请求现在直接携带由 `PatchProposalDraft.model_json_schema()` 实时生成的紧凑 JSON Schema、精确六字段示例和禁止字段列表；提示与 Pydantic 模型共用同一来源，避免手工复制后漂移。
+- 补丁节点现在提供当前 `harness.json` 中真实登记的检查 ID 与公开说明。模型无需猜测 `verification_check_ids`，也看不到 Runner target 或命令。
+- Harness 清单或输出契约无法读取时，在调用模型前返回本地错误，不产生无效补丁请求。
+
+### 安全、成本与兼容性
+
+- 没有接受或映射模型自创字段，也没有放宽 `extra="forbid"`、Claim、Evidence、路径、hunk、改动范围和 Harness ID 校验。
+- `proposal_id`、`status` 与 `validation_errors` 仍只能由本地系统生成；模型不能自行声明补丁通过。
+- 没有增加格式修复重试，显式请求补丁仍最多增加一次无工具模型调用。
+- 原生支持 `json_schema` 的服务商继续使用 API Schema；提示内契约作为跨服务商的共同约束，不改变普通诊断和 Evaluation。
+
+### 文档与验证
+
+- README 已同步为 V12.1，新增 `json_schema` 与 `json_object` 的能力差异、兼容策略和可信边界说明。
+- 新增测试确保提示包含全部模型字段、明确禁止系统字段并提供真实 Harness ID；Graph 集成测试验证最终补丁请求确实携带这些内容。
+- 146 项离线测试全部通过；未调用真实模型 API，未产生 Token 费用。
+
+---
+
+## V12：Read-only Patch Proposal（只读补丁提案）
+
+### 新增
+
+- 新增 `PatchProposalDraft` 与 `PatchProposal` 结构化模型。模型只负责声明关联 Claim、修改文件、unified diff、修复理由、风险和建议运行的 Harness 检查；提案 ID、状态与校验错误由本地系统生成。
+- 新增 `patching.py`，从已经通过来源验证的代码 Evidence 构造最小源码上下文，解析模型草稿，并对候选 diff 做确定性校验。
+- LangGraph 新增可选 `propose_patch` 节点。只有最终诊断报告有效且调用方显式请求时才会进入该节点。
+- CLI 新增 `main.py new --with-patch`；Python API 新增 `generate_patch_proposal=True`。终端和 `AgentRunResult` 均可返回提案或拒绝原因。
+- 运行指标新增是否请求、是否生成及是否通过本地校验三个 Patch 字段。
+
+### 校验与安全边界
+
+- Patch 必须绑定报告中真实存在且已有 Evidence 的 Claim；修改文件必须已经出现在本次代码 Evidence 中。
+- 只允许最多 3 个现有 `.py` 文件和合计 120 行增删，拒绝创建、删除、重命名、二进制补丁、路径越界和不完整 unified diff。
+- 本地逐个 hunk 核对旧/新行数，并要求旧内容与当前磁盘文件精确匹配，防止把过期上下文应用到新版本源码。
+- 禁止修改测试、Harness、Evaluation、配置、Fixture、缓存和状态数据；建议验证的 Harness ID 必须已经登记。
+- V12 没有文件写入、`git apply`、补丁后执行或批准应用入口。`validated` 只表示候选 diff 结构、范围和当前上下文有效，不表示业务语义正确或测试已经通过。
+
+### 成本与兼容性
+
+- 普通 CLI、现有 Evaluation 和 `run_agent()` 默认不生成补丁，模型调用数与 V11 保持一致。
+- 只有显式 opt-in 才增加最多一次无工具模型调用；低置信度、缺少 Claim/Evidence 或没有代码 Evidence 时由本地规则直接跳过，不消耗补丁生成调用。
+- 新增状态和结果字段均提供默认值，旧 SQLite Checkpoint、已保存结果和现有 Python 调用方式继续兼容。
+- 格式或 hunk 校验失败时保存 `rejected` 结果，不进行第二次模型格式修复，避免不可控重试成本。
+
+### 文档与验证
+
+- README 已同步为 V12 当前实现，补充命令、Graph 路径、Patch Schema、校验规则、成本模型、安全边界、限制和面试讲法。
+- 新增草稿解析、合法提案、文件未取证、未知 Claim/Harness、受保护文件、过期上下文、Graph opt-in 和原文件字节不变测试。
+- 145 项离线测试全部通过；未调用真实模型 API，未产生 Token 费用。
+
+---
+
 ## V11：Safe Test Harness（安全测试执行框架）
 
 ### 新增

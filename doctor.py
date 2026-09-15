@@ -1,4 +1,4 @@
-"""V11 本地启动自检；不连接模型服务，也不输出 API Key。"""
+"""V12.1.1 本地启动自检；不连接模型服务，也不输出 API Key。"""
 
 import json
 import sys

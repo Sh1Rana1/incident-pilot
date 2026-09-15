@@ -1,6 +1,6 @@
-# IncidentPilot V11 · Safe Test Harness
+# IncidentPilot V13 · Patch Sandbox Verification
 
-IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看当前工作区的代码、文档和 Git 信息；它还可以在人工批准后，从项目所有者维护的安全清单中选择固定测试，取得真实 Runtime Evidence，最后输出结构化根因报告。系统使用 SQLite 保存可恢复会话和可审批长期事故记忆：新调查可以召回已批准的相似历史，但历史只是候选假设线索，不能冒充当前 Evidence。V11 在 V10.2 稳定基线上增加 Safe Test Harness，把“一小组写死的 Demo”扩展为“由人预登记、由 Agent 选择、由系统安全执行”的通用检查层。
+IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看代码、文档和 Git 信息，并可在人工批准后运行 Safe Test Harness，取得真实 Runtime Evidence。V13 在严格 Patch Proposal 之后增加独立审批与临时副本验证：系统先在副本中确认原故障可复现，再应用候选 diff，最后运行覆盖修改文件的契约检查和全局回归检查。正式工作区始终不被修改，验证过程也不会再调用模型。
 
 当前版本的重点是：
 
@@ -11,6 +11,13 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 使用统一注册器管理八个只读调查工具和两个受限运行时工具；
 - 使用 `harness.json` 预登记测试；模型只能调用 `list_checks()` 和 `run_check(check_id)`，不能提交命令、路径、参数或环境变量；
 - 支持固定的 `demo_case`、`unittest` 和 `pytest` Runner，并返回退出码、通过/失败数量、失败测试名和异常摘要；
+- 使用 `main.py new --with-patch` 生成只读提案，或用 `--verify-patch` 生成并请求隔离验证；普通调查和 Evaluation 默认不增加模型调用；
+- 补丁必须绑定真实诊断 Claim、已经读取的代码 Evidence 和已登记 Harness 检查；
+- 本地解析 unified diff，验证文件头、hunk 行数、当前文件上下文、改动范围和受保护路径；
+- V13 只在系统创建的临时副本中应用候选补丁；补丁仍不能修改测试、Harness、Evaluation 或配置；
+- 区分 `reproduction` 与 `regression`：前者要求补丁前复现故障、补丁后故障消失，后者要求补丁后继续通过；
+- 根据 `covers_files` 自动加入覆盖修改文件的检查，并始终加入全局回归检查；没有覆盖检查的修改拒绝验证；
+- 在任何临时写入和子进程启动前使用独立 HITL 审批，拒绝后不创建临时目录；
 - 使用内部 `update_hypotheses` 控制工具维护候选根因、支持证据和反证；
 - 使用结构化 `next_action` 明确下一工具、目的、支持条件和否定条件；
 - 新证据产生后强制先更新假设，未归类前禁止继续调用外部工具；
@@ -39,9 +46,9 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 统计上下文压缩、Observation 利用率和确认根因后的额外调用。
 - 将每次报告验证错误持久化到 Evaluation JSON，保留字段路径和具体原因。
 
-当前版本不会执行模型生成的任意命令，不会修改代码或操作生产环境。它只能运行 `harness.json` 中由项目所有者预登记并通过安全校验的检查，以及为兼容旧版本保留的四个固定 Demo Case；Runtime 默认关闭，而且交互模式每次执行前都会暂停请求批准。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
+当前版本不会执行模型生成的任意命令，不会修改正式工作区或操作生产环境。它只能运行 `harness.json` 中由项目所有者预登记并通过安全校验的检查，以及为兼容旧版本保留的四个固定 Demo Case；Runtime 默认关闭。Patch Proposal 的 `validated` 只表示格式与范围合法；只有隔离验证结果为 `verified`，才表示当次临时副本中的基线、补丁应用和补丁后检查全部满足 V13 规则。这里的“隔离”是临时工作区隔离，不是容器或操作系统安全沙箱。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
 
-版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V11 的真实实现。
+版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V13 的真实实现。
 
 ## 1. 快速开始
 
@@ -196,7 +203,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 选择 1 只批准当前预登记调用；选择 2 不执行但允许 Agent 根据静态证据继续；选择 3 取消本次调查。运行结束后建议将开关恢复为 `false`。
 
-### 1.5 V11 稳定持久化命令
+### 1.5 V13 稳定持久化命令
 
 不带参数的 `main.py` 仍是原来的连续交互模式。如果要在退出程序后继续调查，使用持久化命令：
 
@@ -245,7 +252,60 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 新增自己的检查时，只编辑 `harness.json`，选择受支持 Runner 并填写固定 target；先运行 `main.py doctor` 检查清单，再让 Agent 使用它。不要把用户输入、模型输出或可变字符串写进 target。`harness.json` 是权限清单，不应当由 Agent 自动改写。
 
-### 1.7 长期事故记忆命令
+### 1.7 生成提案并进行 V13 隔离验证
+
+补丁生成必须显式开启，否则现有调查和 Evaluation 不会多花一次模型调用：
+
+```powershell
+.\.venv\Scripts\python.exe main.py new --with-patch
+```
+
+输入完整报错，并要求先诊断再提出最小修复。系统仍先完成普通调查；只有最终报告为 medium/high、包含 Claim 和 Evidence、且通过来源验证，才会额外调用一次模型生成 `PatchProposalDraft`。随后本地校验器检查 diff，终端显示 `validated` 或 `rejected`。`--with-patch` 到这里结束，不改动任何文件，也不运行补丁后测试。
+
+一个合格提案会展示：
+
+```text
+proposal_id
+status                       # validated / rejected
+diagnosis_claim_ids          # 修复对应哪些已验证结论
+changed_files                # 与 diff 文件头完全一致
+unified_diff                 # 只读补丁文本
+rationale / risks
+verification_check_ids       # 将来应用后应运行哪些 Harness 检查
+validation_errors
+```
+
+不调用模型的本地验证方式：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_patching
+```
+
+需要继续验证候选补丁的行为时，先在 `api.env` 设置 `ENABLE_RUNTIME_TOOLS=true`，再运行：
+
+```powershell
+.\.venv\Scripts\python.exe main.py new --verify-patch
+```
+
+`--verify-patch` 自动包含 `--with-patch` 的行为。提案通过结构校验后，Graph 会显示一项独立审批，列出即将运行的预登记检查。批准后系统才会：
+
+1. 复制项目到系统临时目录，排除 `.git`、虚拟环境、密钥、缓存、报告和 SQLite 状态；
+2. 在临时副本中运行补丁前基线；`reproduction` 检查必须先稳定复现原故障；
+3. 只在临时副本中应用已经重新校验的 unified diff；
+4. 运行补丁后检查；故障复现项必须变为成功，回归项必须保持预期结果；
+5. 删除临时目录，并重新核对正式工作区目标文件的 SHA-256。
+
+系统会自动加入所有 `covers_files` 命中修改文件的检查，以及 `covers_files=[]` 的全局回归检查。模型不能通过只选择一个宽松检查绕过契约测试。对于当前 `demo_app/app/api.py`，`api_missing_fields_contract` 会验证缺字段时返回 400 且没有调用 Service，因此“只是把 `KeyError` 换成 `ValueError`”会得到 `failed`，不会被误判为修好。
+
+隔离验证不会再调用模型，因此相对 `--with-patch` 不增加 Token；成本只来自本地复制和预登记检查。它也不会把验证通过的补丁写回正式工作区，用户仍需审查 diff 后自行决定是否实施。
+
+只运行 V13 本地验证测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_patch_verification
+```
+
+### 1.8 长期事故记忆命令
 
 持久化调查只有在 `stop_reason=completed`、置信度为 medium/high，且报告同时存在 Claim 和 Evidence 时，才会生成 `pending` 记忆。候选不会自动影响新调查：
 
@@ -268,7 +328,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 `memory list/search/approve/reject/forget` 都只操作本地 SQLite，不调用模型，不产生 Token 费用。
 
-### 1.8 启动自检与稳定依赖
+### 1.9 启动自检与稳定依赖
 
 `doctor` 是一个完全本地的快速检查：验证 Python 至少为 3.10、五个直接依赖已经安装、`api.env` 和 `harness.json` 能通过校验，以及 SQLite 状态库能够打开和自动迁移。它只显示模型名、输出模式、Runtime 开关、检查数量和清单哈希前缀，绝不会打印 API Key，也不会创建模型客户端或访问网络。
 
@@ -318,6 +378,9 @@ IncidentPilot 可以：
 - 统计 Token、上下文压缩、Observation 利用率、早停、人工确认、格式修复和受保护路径尝试；
 - 为每次工具调用保存参数、来源、摘要哈希和耗时；
 - 输出根因、Claim—Evidence Ledger、修复建议和置信度；
+- 为合格报告生成受范围限制、绑定 Claim/Evidence 的 unified diff 提案；
+- 经独立人工批准，在临时副本中执行补丁前/后的预登记检查；
+- 自动选择覆盖修改文件的契约检查和全局回归检查，并输出逐项验证结果；
 - 拒绝未读取文件、越界行号、伪造 Observation 和虚假 Git 提交；
 - 接受纯 JSON、JSON 代码块和前后带少量说明的合法报告，并记录历次验证错误；
 - 批量评测七个故障诊断案例，其中一个强制要求 Runtime Evidence；
@@ -329,9 +392,9 @@ IncidentPilot 可以：
 
 - 执行 Agent 自己提出的任意 Shell 命令、参数或路径；
 - 运行预登记列表之外的用户项目入口；
-- 修改、删除或创建业务代码；
-- 自动应用修复补丁；
-- 自动运行修复后的测试；
+- 修改、删除或创建正式工作区中的业务代码；
+- 把验证通过的修复自动写回正式工作区；
+- 运行 Harness 清单之外的补丁后命令；
 - 连接生产数据库或生产环境；
 - 对任意外部项目动态切换调查根目录；
 - 将本地 SQLite 会话在多台机器间共享；
@@ -366,6 +429,8 @@ incident-pilot/
 ├── runtime_tools.py           # 预登记 Demo 执行、超时和 Runtime ID
 ├── harness.json                # 项目所有者维护的安全测试清单
 ├── harness.py                  # 清单校验、固定 Runner 和结构化测试结果
+├── patching.py                 # unified diff 解析、范围和当前上下文校验
+├── patch_verification.py       # 临时副本、基线/补丁后 Harness 与清理校验
 ├── .incident_state/           # Checkpoint/会话/Runtime 账本（自动生成）
 ├── tool_profiles.py            # Profile 工具白名单与文档路径隔离
 ├── evaluation.py              # 单案例确定性评分
@@ -380,7 +445,7 @@ incident-pilot/
 │   ├── docs/                   # RAG 专用的规范、Runbook 和事故文档
 │   ├── fixtures/               # Agent 不可见的外部系统模拟器
 │   ├── logs/                   # 可用于提问的简化 traceback
-│   ├── checks/                 # 可由 Harness 运行的公开 Smoke Test
+│   ├── checks/                 # 可由 Harness 运行的 Smoke 与业务契约检查
 │   ├── evals/                  # Agent 不可见的标准答案
 │   └── run_case.py             # 四个可执行故障的入口
 ├── test_agent.py
@@ -397,6 +462,8 @@ incident-pilot/
 ├── test_provenance.py
 ├── test_runtime_tools.py
 ├── test_harness.py             # Harness 参数、隔离、超时、重放和真实运行测试
+├── test_patching.py            # 只读补丁、Evidence 绑定和拒绝规则测试
+├── test_patch_verification.py  # V13 临时应用、行为失败和工作区不变测试
 ├── test_tools.py
 ├── README.md                   # 当前版本完整说明
 └── CHANGELOG.md                # 版本演进记录
@@ -414,7 +481,7 @@ incident-pilot/
 
 ## 4. 从输入到报告的完整数据流
 
-V11 有两个外层入口：`run_agent()` 使用内存 Checkpoint，适合兼容原调用方；`main.py new/resume` 使用 SQLite Checkpoint 和长期 Memory，适合日常完整调查。两者共用同一张 LangGraph，不存在两套诊断逻辑。持久化入口默认在当前终端处理审批并自动恢复；兼容入口不读写长期记忆，避免旧 API 在无感知情况下改变行为。
+V13 有两个外层入口：`run_agent()` 使用内存 Checkpoint，适合兼容原调用方；`main.py new/resume` 使用 SQLite Checkpoint、长期 Memory、可选 Patch Proposal 和隔离验证，适合日常完整调查。两者共用同一张 LangGraph，不存在两套诊断逻辑。补丁生成和验证默认关闭；`--with-patch` 只生成提案，`--verify-patch` 同时开启提案与验证。
 
 ```text
 main.py 收集一段完整多行输入
@@ -451,7 +518,21 @@ call_model
         │                   └── cancel → build_cancelled → END
         │
         └── 返回报告文本 → Pydantic + Provenance 验证
-                                ├── Schema、Claim 和来源全部合法 → END
+                                ├── Schema、Claim 和来源全部合法
+                                │       ├── 未请求补丁 → END
+                                │       └── 请求补丁 → propose_patch
+                                │                           ├── 生成 PatchProposalDraft
+                                │                           ├── 本地只读校验 unified diff
+                                │                           ├── 保存 rejected 提案 → END
+                                │                           └── validated
+                                │                                  ├── 仅 --with-patch → END
+                                │                                  └── --verify-patch → patch_review
+                                │                                                       ├── deny/cancel → END
+                                │                                                       └── approve → verify_patch
+                                │                                                                    ├── 临时副本运行基线
+                                │                                                                    ├── 临时应用 diff
+                                │                                                                    ├── 运行契约与回归检查
+                                │                                                                    └── 删除副本 → END
                                 ├── 伪造来源或越界 → 带错误重试
                                 ├── 可重试 → call_model
                                 └── 强制总结非法 → repair_report
@@ -459,13 +540,17 @@ call_model
                                                         └── 仍非法 → build_fallback → END
         ↓
 IncidentReport
+        +
+可选 PatchProposal
+        +
+可选 PatchVerificationResult（只在临时副本应用）
         ↓
 main.py 格式化为人类可读文本
         ↓（仅 completed + medium/high + Claim/Evidence 完整）
 生成 pending Incident Memory 候选，等待用户 approve/reject
 ```
 
-模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具；真正的文件、RAG、Git 和受限检查由本地 Python 函数完成。V11 中模型先用 `list_checks` 查看公开的检查 ID，再把其中一个 ID 交给 `run_check`；系统重新读取并校验 `harness.json`，自行构造固定参数数组。Runtime 调用仍先经过配置、Profile、人工授权和次数预算，执行层再使用固定项目目录、`shell=False`、最小环境和双重超时上限。工具结果进入完整 LangGraph 状态并生成系统控制的 Observation；下一次请求只发送压缩调查记忆，完整消息、Observation 和假设仍留在 Checkpoint 中供验证与审计。
+模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具；真正的文件、RAG、Git 和受限检查由本地 Python 函数完成。当前版本中模型先用 `list_checks` 查看公开检查，再把一个 ID 交给 `run_check`；Runtime 仍经过配置、Profile、人工授权和次数预算。最终总结和格式修复请求会收到严格 IncidentReport Schema 及可引用 Observation 来源白名单。若显式请求补丁，只有已通过验证的报告能进入 `propose_patch`；该节点只读取报告已经引用过的代码 Evidence，为模型提供精确当前内容、严格输出 Schema 和已登记检查 ID，然后把草稿交给本地校验器。若进一步请求隔离验证，`patch_review` 会在任何临时写入前暂停；批准后 `verify_patch` 只用确定性本地代码重新校验提案、复制项目、运行检查、应用 diff 和清理，不发生额外模型调用，也不写正式工作区。
 
 在持久化模式中，LangGraph 每个超步的状态和 `interrupt()` 待续工作由 `SqliteSaver` 同步写盘。`incident_sessions` 表只是面向 CLI 的索引，保存问题、状态、审批请求和最终结果；图的真正恢复仍由 LangGraph Checkpoint 完成。`resume` 用同一 `thread_id` 和 `Command(resume=...)` 继续，不会把旧问题重新发给一个新 Agent。
 
@@ -510,10 +595,14 @@ main.py 格式化为人类可读文本
 | `runtime_replay_count` | 命中已完成幂等账本、直接复用旧结果的次数 |
 | `runtime_ledger_path / thread_id` | 持久化模式中的账本位置和稳定会话 ID |
 | `recalled_memory_count` | 本次持久化调查实际注入的 approved 历史记忆数量；兼容入口固定为 0 |
+| `generate_patch_proposal / patch_proposal` | 是否请求补丁及本地校验后的候选提案 |
+| `verify_patch_proposal / patch_verification` | 是否请求隔离验证及结构化验证结果 |
+| `patch_verification_decision` | 独立补丁审批的 `approve` 或 `deny` 决策 |
+| `patch_verification_approval_count` | 真正允许临时写入和检查执行的次数 |
 
-`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。V11 的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
+`messages` 使用追加 reducer。节点只返回新增消息，LangGraph 将其追加到完整历史；计数、报告和布尔值等字段由节点返回的新值覆盖。当前的压缩与证据保全发生在模型请求边界，不会修改这个完整状态。
 
-每次调查默认生成新 UUID 作为 thread ID，避免不同问题共享状态。兼容函数 `run_agent()` 仍使用 `InMemorySaver`；V11 CLI 则使用 `SqliteSaver`，因此关闭原 Python 进程后仍能用相同 thread ID 恢复。这种双入口设计保留旧 API，同时让新 CLI 获得持久性和经过审批的长期记忆。
+每次调查默认生成新 UUID 作为 thread ID，避免不同问题共享状态。兼容函数 `run_agent()` 仍使用 `InMemorySaver`；当前 CLI 使用 `SqliteSaver`，因此关闭原 Python 进程后仍能用相同 thread ID 恢复。这种双入口设计保留旧 API，同时让 CLI 获得持久性、经过审批的长期记忆、可选补丁提案和隔离验证。
 
 ### 5.2 节点
 
@@ -535,6 +624,14 @@ main.py 格式化为人类可读文本
 
 Evaluation 没有人工输入循环，所以必须由操作者同时选择 `full_runtime` 并添加 `--allow-runtime`。该标志会作为本次评测的明确预授权，不会修改 `api.env`。
 
+#### `propose_patch`、`patch_review` 与 `verify_patch`
+
+`propose_patch` 是唯一会为修复额外调用模型的节点，最多调用一次。它只接收已经验证的报告和报告中真实读取过的代码，再由本地规则生成 `validated` 或 `rejected` 提案。
+
+只有调用方显式选择 `--verify-patch` 且提案为 `validated`，图才进入 `patch_review`。这个 interrupt 与调查费用审批、Runtime 工具审批、Memory 审批彼此独立；批准只允许本次候选提案在临时目录中应用和运行界面列出的预登记检查。拒绝或取消时不会创建临时目录，也不会启动检查进程。持久化状态会显示为 `waiting_for_patch_approval`。
+
+批准后 `verify_patch` 不调用模型。它重新对正式工作区校验 proposal ID 和 diff 上下文，要求每个修改文件至少被一个清单检查覆盖，然后复制安全子集到临时目录。基线阶段要求所有选中的 `reproduction` 检查仍能复现目标故障；临时应用 diff 后，`reproduction` 必须以 0 退出且不再命中旧故障退出码，`regression` 必须满足清单中的预期退出码。模型建议的检查、覆盖修改文件的检查以及无特定覆盖文件的全局回归都会合并运行。最后删除临时目录并比较正式目标文件的前后 SHA-256。
+
 #### `SessionStore` 与跨进程恢复
 
 `session_store.py` 在同一 SQLite 文件中管理四类数据：
@@ -544,7 +641,7 @@ Evaluation 没有人工输入循环，所以必须由操作者同时选择 `full
 3. `runtime_executions` 表，保存执行型工具的幂等账本；
 4. `incident_memories` 表，保存待审批、已批准或已拒绝的长期事故记忆。
 
-会话状态只能是 `running`、`waiting_for_runtime_approval`、`waiting_for_human_review`、`completed`、`cancelled` 或 `failed`。`start_session()` 先建立会话索引，再以 `durability="sync"` 运行图；遇到 interrupt 就保存审批请求。`resume_session()` 只接受当前审批点允许的动作，然后用 `Command(resume=...)` 恢复。V11 的 CLI 在外层循环检查 `pending_review`：正常情况下当场读取用户选择并自动调用 `resume_session()`，如果恢复后再次暂停就继续询问；`Ctrl+C`、EOF 和 `--detach` 只结束 CLI，不删除已经同步保存的状态。
+会话状态只能是 `running`、`waiting_for_runtime_approval`、`waiting_for_patch_approval`、`waiting_for_human_review`、`completed`、`cancelled` 或 `failed`。`start_session()` 先建立会话索引，再以 `durability="sync"` 运行图；遇到 interrupt 就保存审批请求。`resume_session()` 只接受当前审批点允许的动作，然后用 `Command(resume=...)` 恢复。CLI 在外层循环检查 `pending_review`：正常情况下当场读取用户选择并自动调用 `resume_session()`，如果恢复后再次暂停就继续询问；`Ctrl+C`、EOF 和 `--detach` 只结束 CLI，不删除已经同步保存的状态。
 
 Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态导入自定义模块。这样不会因读取被篡改的本地状态而任意实例化 Python 类。`api.env` 和 API Key 不进入 AgentState、会话表或 Runtime 账本；恢复时重新从环境加载客户端配置。
 
@@ -604,7 +701,7 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 max_steps = 8
 ```
 
-它控制允许使用工具的调查轮数。除此以外，V11 还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
+它控制允许使用工具的调查轮数。除此以外，系统还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。可选补丁提案最多增加一次无工具模型调用。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
 
 LangGraph 框架保险为：
 
@@ -698,9 +795,9 @@ score
 
 Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，输出最多 20,000 字符。它们不会执行提交、重置、切换分支或修改工作区。
 
-### 6.5 V11 Safe Test Harness
+### 6.5 Safe Test Harness
 
-V11 有两个 Harness 工具：
+当前有两个 Harness 工具：
 
 | 工具 | 模型可以提供什么 | 作用 |
 |---|---|---|
@@ -732,6 +829,40 @@ V11 有两个 Harness 工具：
 清单原文和每个检查定义都会计算 SHA-256。幂等账本把检查 ID 与定义哈希共同绑定：同一审批点恢复时，已完成结果直接安全重放；如果项目所有者改变了检查定义，它会成为不同执行对象，不会把旧结果误当作新结果。每次运行生成的 `runtime_id` 被写入 Observation；最终 `source_type=runtime` 的 Evidence 必须引用同一 Observation 和同一 Runtime ID，模型编造的 ID 无法通过来源验证。
 
 旧工具 `run_demo_case(case_id)` 继续保留，避免 V9/V10 的调用方和评测失效；新调查应优先使用 `list_checks` + `run_check`。两种执行工具共用同一个配置开关、`full_runtime` Profile、人工审批节点、Runtime 次数预算、全局超时、指标和 SQLite 幂等账本。
+
+### 6.6 V13 Patch Proposal 与 Sandbox Verification
+
+Patch Proposal 不是 Agent 工具，而是最终报告验证成功后的可选 Graph 节点。这样模型在调查阶段不能借“生成补丁”绕过工具和证据约束，也不会把补丁草稿误当成当前代码。
+
+模型只生成 `PatchProposalDraft`：
+
+```text
+diagnosis_claim_ids[]       修复对应的报告 Claim
+changed_files[]             声明要修改的文件，最多 3 个
+unified_diff                标准 unified diff，最多 50,000 字符
+rationale                   为什么这处修改能解决根因
+risks[]                     兼容性和行为风险
+verification_check_ids[]    应使用的已登记 Harness 检查
+```
+
+`proposal_id`、`status` 和 `validation_errors` 由本地系统生成，模型不能自行宣称“已经验证”。确定性校验包括：
+
+1. Claim 必须真实存在且已经绑定 Evidence；
+2. diff 中的文件必须与 `changed_files` 完全一致；
+3. 只能修改最多 3 个已经存在的 Python 文件，增删总量不超过 120 行；
+4. 每个修改文件必须已经出现在本次报告的代码 Evidence 中；
+5. 禁止创建、删除、重命名、二进制补丁、路径越界和通配式目标；
+6. 禁止修改测试、`harness.json`、Harness/Evaluation、API 配置、夹具、缓存和状态库；
+7. 每个 `@@` hunk 声明的旧/新行数必须准确，旧内容必须逐行匹配当前磁盘文件；
+8. `verification_check_ids` 必须真实存在于当前 Harness 清单。
+
+全部满足时状态为 `validated`；否则状态为 `rejected` 并列出具体原因。`validated` 只证明它是一个当前可审查、范围受控、上下文匹配的候选 diff，并不能证明业务语义正确。`--with-patch` 仍在这里结束，保持 V12 的只读兼容行为。
+
+当服务商支持 `json_schema` 时，请求使用原生严格 Schema；DeepSeek 等只提供 `json_object` 的兼容接口只能保证“这是 JSON”，不能保证字段名正确。V13 因此还把由 Pydantic 模型实时生成的 Schema 放进最终报告、格式修复和补丁请求：报告请求额外列出可引用 Observation 与精确来源，补丁请求额外提供六字段示例、禁止字段，以及每个 Harness ID 的 `purpose` 和 `covers_files`。Schema 由模型类生成而不是复制两套定义，后续字段变化不会让提示与本地校验器悄悄失步。最终本地 Pydantic、Provenance、diff 和 Harness 结果校验仍是唯一可信边界。
+
+`--verify-patch` 在 `validated` 后进入独立审批。批准后系统在临时副本运行基线、应用 diff、运行补丁后检查并删除副本。模型选择的检查只是建议；系统还会强制加入覆盖每个修改文件的检查和全局回归，且没有覆盖声明的文件直接拒绝验证。最终 `PatchVerificationResult.status` 有 `verified`、`failed`、`rejected` 或 `denied`，并保存每个检查的阶段、退出码、预期是否命中、成功条件、测试计数、失败项、输出摘要、超时和耗时。
+
+成本方面，普通 `main.py`、`main.py new`、现有 Evaluation 和 `run_agent()` 默认行为不变。只有 `--with-patch`、`--verify-patch` 或对应 API 参数才多执行最多一次无工具模型请求；隔离验证本身不调用模型，不增加 Token，只消耗本地复制与 Harness 时间。低置信度、没有 Claim/Evidence 或没有代码 Evidence 时由本地规则直接跳过，不消耗补丁生成调用。
 
 ## 7. 本地 RAG 原理
 
@@ -981,7 +1112,10 @@ AgentRunResult
 ├── metrics: RunMetrics
 ├── observations[]: ToolObservation
 ├── hypotheses[]: DiagnosticHypothesis
-└── validation_errors[]: 历次报告验证错误
+├── validation_errors[]: 历次报告验证错误
+├── patch_proposal: PatchProposal | null
+├── patch_validation_errors[]: 补丁格式或安全验证错误
+└── patch_verification: PatchVerificationResult | null
 ```
 
 `RunMetrics` 包含：
@@ -1011,13 +1145,19 @@ AgentRunResult
 | `runtime_timeout_count` | 因超时终止的 Runtime 次数 |
 | `runtime_approval_count / runtime_denial_count` | 交互式 Runtime 批准和拒绝次数 |
 | `recalled_memory_count` | 本次调查实际召回并注入的 approved Incident Memory 数量 |
+| `patch_requested` | 调用方是否显式请求当前版本的补丁提案 |
+| `patch_proposal_generated / patch_proposal_valid` | 是否生成提案，以及是否通过本地确定性校验 |
+| `patch_verification_requested` | 调用方是否显式请求 V13 隔离验证 |
+| `patch_verification_approval_count` | 用户批准临时验证的次数 |
+| `patch_verification_check_count` | 基线与补丁后实际运行的检查总次数 |
+| `patch_verified` | 是否得到 `verified` 结果 |
 | `tool_names` | 按请求顺序记录的工具名 |
 | `stop_reason` | 图结束原因 |
 | `duration_ms` | `app.invoke()` 的墙钟耗时 |
 
 普通 `run_agent()` 仍然只返回 `IncidentReport`，保持现有调用方兼容。
 
-## 11. V11 工具消融、Runtime Evidence、成本与稳定性实验
+## 11. 工具消融、Runtime Evidence、成本与稳定性实验
 
 ### 11.1 四种 Profile
 
@@ -1184,7 +1324,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 135 项测试，覆盖：
+当前共有 155 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1194,6 +1334,17 @@ ExperimentRun
 - Harness 清单重复 ID、未知 ID、路径越界、内部评测目标与模型自带命令字段的拒绝；
 - `unittest` 结果计数、失败用例提取、预期非零退出码和真实 Runtime Observation；
 - `run_check` 人工审批、恢复执行、定义哈希绑定与幂等安全重放；
+- Patch Proposal 必须显式开启，默认调查和 Evaluation 不增加调用；
+- unified diff JSON 解析、文件头、hunk 行数与当前磁盘上下文匹配；
+- 补丁 Claim、代码 Evidence、changed_files 和 Harness 检查 ID 绑定；
+- 拒绝未取证文件、测试、Harness、Evaluation、配置、越界路径及创建/删除/重命名；
+- 验证成功与失败的补丁都不会改变业务文件；
+- `--verify-patch` 在临时副本应用补丁，正式目标文件前后字节保持一致；
+- 补丁验证拒绝没有 `covers_files` 契约检查覆盖的修改文件；
+- `reproduction` 基线必须先复现旧故障，补丁后必须正常退出；`regression` 补丁后必须保持预期；
+- 模型漏选时仍自动加入覆盖检查和全局回归检查；
+- ValueError 替换 KeyError 但没有按 API 契约返回 400 的补丁会被行为检查拒绝；
+- 补丁验证批准、拒绝、持久化等待状态和恢复执行；
 - Runtime 摘要优先保留异常消息与业务 traceback 帧，长堆栈不会挤掉根因线索；
 - LangGraph 路由、报告重试、预算和强制总结；
 - 内部假设工具的格式、ID、成功 Observation 与状态约束；
@@ -1257,7 +1408,7 @@ ExperimentRun
 
 ### 13.2 调查与执行边界
 
-文件、RAG、Git 和 `list_checks` 都是只读的。Runtime 工具会启动一个本地子进程，但模型只能选择预登记 ID，不能提供命令、路径、参数、工作目录或环境变量；清单 target 还会经过 Runner 专用校验。执行受默认关闭的环境开关、独立 Profile、交互式单次审批、调用次数、双重超时和持久幂等账本共同约束。Git 工具和 Runtime 工具都不通过 Shell 拼接命令，文件工具不提供写入，系统提示也明确禁止修改。Evaluation 在 `.incident_reports/` 写报告，RAG 在 `.incident_cache/` 写缓存，持久化 CLI 在 `.incident_state/` 写状态；这些属于本地基础设施，不是模型可调用的业务写入工具。
+文件、RAG、Git 和 `list_checks` 都是只读的。Runtime 工具会启动一个本地子进程，但模型只能选择预登记 ID，不能提供命令、路径、参数、工作目录或环境变量；清单 target 还会经过 Runner 专用校验。执行受默认关闭的环境开关、独立 Profile、交互式单次审批、调用次数、双重超时和持久幂等账本共同约束。V13 的补丁验证使用另一项审批，在批准前不创建临时副本；批准后只复制项目安全子集，排除密钥、Git、虚拟环境、缓存、报告、状态和符号链接，且只在该副本写入。正式目标文件在验证前后进行 SHA-256 对比。Git、Runtime 和补丁验证都不通过 Shell 拼接模型文本。Evaluation 在 `.incident_reports/` 写报告，RAG 在 `.incident_cache/` 写缓存，持久化 CLI 在 `.incident_state/` 写状态；这些属于本地基础设施，不是模型可调用的正式业务写入工具。
 
 ### 13.3 外部模型数据边界
 
@@ -1328,7 +1479,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ### Agent 调用了很多工具
 
-一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。V11 默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
+一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。系统默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
 
 ### Evaluation 为什么提示费用保护
 
@@ -1395,7 +1546,13 @@ ModuleNotFoundError: No module named 'langgraph'
 - 外部子进程与 SQLite 不能组成单个原子事务；崩溃留下的 `running` Runtime 操作需要人工处理；
 - Harness 只覆盖 `harness.json` 中预登记的本仓库检查，不是容器或通用沙箱；编辑清单等同于授予新的本地测试能力，必须由项目所有者审查；
 - Runtime 批准按当前模型工具请求生效，默认预算只允许实际运行一次；尚未实现风险等级和审批策略引擎；
-- 没有补丁生成、人工批准写入、修复后测试和回滚；
+- Patch Proposal 目前只允许修改已取证的现有 `.py` 文件，最多 3 个文件和 120 行增删；不能创建文件，也不能同时生成测试修改；
+- V13 的 `verified` 只证明候选补丁通过当前预登记检查，不能证明未覆盖行为、性能、并发或生产环境一定正确；
+- 临时目录是工作区隔离，不是容器或操作系统安全沙箱；项目所有者必须审查 `harness.json`，因为已登记 Python 检查仍作为本机子进程运行；
+- 临时副本主动排除密钥和状态，但当前没有操作系统级文件系统与网络隔离；只应登记可信的项目检查；
+- 每个修改文件必须已有 `covers_files` 覆盖声明，因此没有对应契约检查的文件会被拒绝验证，需要项目所有者先补充可信检查；
+- 补丁生成只有一次模型机会；格式或 hunk 上下文错误时直接保留为 `rejected`，不会为了修复格式自动增加第二次调用；
+- 验证通过的补丁不会自动写回正式工作区；尚无正式应用审批、提交、自动回滚或 PR 流程；
 - 没有 Web UI 或服务端 API。
 - `requirements.lock` 只锁定五个直接依赖，没有像完整锁文件工具那样记录所有传递依赖和平台哈希。
 
@@ -1403,23 +1560,22 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 将 V11 作为新的稳定基线：先运行 `doctor`，再手工验收一次 Harness 审批、一次关闭终端后恢复和一次 Memory 召回；
-2. V12 增加“只生成补丁、不写入”的 Patch Proposal 和差异审查；
-3. V13 再增加独立写入审批、临时工作区应用、Harness 验证和失败回滚；
-4. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用和多模型对比；
-5. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库。
+1. 将 V13 作为稳定基线：运行 `doctor`，手工验收一次 `--with-patch` 只读提案、一次 `--verify-patch` 行为失败和一次真正 `verified`；
+2. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用、多模型对比和 Judge 一致性评测；
+3. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库；
+4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
-系统把可持久的 Human-in-the-loop 放在第一个执行型工具之前，又把另一类人工审批用于长期知识进入召回池之前。将来增加任何写入能力时，不能复用这两类批准，而要建立独立的补丁审批门。
+系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。
 
 ## 18. 面试讲解版本
 
 一句话：
 
-> IncidentPilot 是一个基于 LangGraph 的成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。V11 的 Safe Test Harness 让模型只能选择人工预登记的检查 ID，由系统构造固定 Runner 命令；执行前由 interrupt 请求批准，SQLite Checkpoint 支持跨进程恢复，定义哈希和幂等账本避免误用旧结果或重复执行。成功事故可以沉淀为人工审批的长期记忆，但历史仍必须用当前代码、文档、Git 或 Runtime 重新取证。
+> IncidentPilot 是一个基于 LangGraph 的成本感知、假设与证据驱动 Python 故障诊断 Agent。它用结构化下一步动作和单轮工具上限控制调查宽度，用压缩调查记忆降低重复输入 Token；只有 confirmed 假设获得独立 Observation 才提前总结。Safe Test Harness 让模型只能选择人工预登记的检查 ID，由系统构造固定 Runner 命令；执行前由 interrupt 请求批准，SQLite Checkpoint 支持跨进程恢复，定义哈希和幂等账本避免误用旧结果或重复执行。V13 用严格 Schema 与 Observation 白名单约束报告和候选 diff，再经独立审批在临时副本做补丁前复现、补丁后契约与回归验证，正式工作区始终不变。
 
 完整流程：
 
-> 用户提交完整 traceback 后，持久化入口先在本地召回最多三条已审批相似事故，并明确标为非证据线索。模型通过内部控制工具保存候选 Hypothesis，为未确认假设声明可证伪的下一步动作，每轮只执行有限数量的高信息价值工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。若需要真实复现，模型先用 `list_checks` 发现能力，再用 `run_check(check_id)` 请求固定检查并进入 `runtime_review`，SQLite Checkpoint 在执行前同步持久化 interrupt；用户批准后，系统从受信清单构造 Runner 参数，幂等账本再决定是真正执行、返回旧结果还是因结果不确定而拒绝重跑。系统拒绝不存在、失败、伪造或来自历史 Memory 的 Evidence；confirmed 假设必须获得至少两项独立来源才触发早停。最终 Claim—Evidence Ledger 经过 Pydantic 和 Provenance 双重验证，合格报告才生成待审批 Memory。Evaluation 同时衡量准确性、证据落地、Runtime 使用、历史召回、上下文压缩、Token、工具贡献和稳定性。
+> 用户提交完整 traceback 后，持久化入口先在本地召回最多三条已审批相似事故，并明确标为非证据线索。模型通过内部控制工具保存候选 Hypothesis，为未确认假设声明可证伪的下一步动作，每轮只执行有限数量的高信息价值工具；完整状态留在 Checkpoint，而模型请求只携带当前假设、被引用证据和最近未分类证据。若需要真实复现，模型先用 `list_checks` 发现能力，再用 `run_check(check_id)` 请求固定检查并进入 `runtime_review`，SQLite Checkpoint 在执行前同步持久化 interrupt；用户批准后，系统从受信清单构造 Runner 参数，幂等账本再决定是真正执行、返回旧结果还是因结果不确定而拒绝重跑。系统拒绝不存在、失败、伪造或来自历史 Memory 的 Evidence；confirmed 假设必须获得至少两项独立来源才触发早停。最终 Claim—Evidence Ledger 经过 Pydantic 和 Provenance 双重验证，合格报告才生成待审批 Memory；如果调用方显式请求补丁，Graph 再进行一次无工具模型调用生成草稿，本地校验 Claim、文件、hunk 上下文与 Harness ID。若请求 V13 验证，Graph 在独立审批后把项目复制到临时目录，先验证原故障可复现，再应用 diff，最后自动运行覆盖修改文件的契约检查和全局回归，清理副本并确认正式源码未变。Evaluation 同时衡量准确性、证据落地、Runtime 使用、历史召回、上下文压缩、Token、工具贡献和稳定性。
 
 ## 19. 文档维护规则
 

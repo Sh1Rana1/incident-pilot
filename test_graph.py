@@ -3,6 +3,7 @@
 import json
 import subprocess
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from langgraph.types import Command
 from graph import (
     SYSTEM_PROMPT,
     build_agent_graph,
+    build_report_output_contract,
     route_after_model,
     route_after_tools,
     route_after_validation,
@@ -19,6 +21,7 @@ from graph import (
     parse_incident_report,
     tool_call_signature,
 )
+from models import PatchVerificationResult
 from tool_profiles import TOOL_PROFILES
 
 
@@ -132,6 +135,10 @@ def initial_state(max_steps=8):
         "runtime_ledger_path": None,
         "thread_id": "test-thread",
         "recalled_memory_count": 0,
+        "patch_requested": False,
+        "patch_attempted": False,
+        "patch_proposal": None,
+        "patch_validation_errors": [],
     }
 
 
@@ -146,6 +153,34 @@ def test_config():
 
 
 class RoutingTests(unittest.TestCase):
+    def test_report_contract_has_schema_and_only_real_observations(self):
+        state = initial_state()
+        state["observations"] = [{
+            "observation_id": "obs-001",
+            "tool_call_id": "call-1",
+            "step": 1,
+            "tool_name": "read_file",
+            "arguments": {"path": "main.py"},
+            "ok": True,
+            "repeated": False,
+            "sources": [{
+                "source_type": "code", "file": "main.py",
+                "line_start": 1, "line_end": 2,
+                "chunk_id": None, "commit_hash": None, "runtime_id": None,
+            }],
+            "error": None,
+            "result_sha256": "digest",
+            "result_excerpt": "excerpt",
+            "duration_ms": 1.0,
+        }]
+
+        contract = build_report_output_contract(state)
+
+        self.assertIn("suggested_fixes 必须是字符串数组", contract)
+        self.assertIn('"additionalProperties":false', contract)
+        self.assertIn("obs-001", contract)
+        self.assertIn("Claim.evidence_ids", contract)
+
     def test_model_routes_to_tools(self):
         state = initial_state()
         state["step_count"] = 1
@@ -156,6 +191,13 @@ class RoutingTests(unittest.TestCase):
         state = initial_state()
         state["report"] = json.loads(VALID_REPORT)
         self.assertEqual(route_after_validation(state), "end")
+
+    def test_valid_report_routes_to_patch_only_when_requested(self):
+        state = initial_state()
+        state["report"] = json.loads(VALID_REPORT)
+        state["stop_reason"] = "completed"
+        state["patch_requested"] = True
+        self.assertEqual(route_after_validation(state), "propose_patch")
 
     def test_budget_still_executes_last_requested_tool(self):
         state = initial_state(max_steps=1)
@@ -190,6 +232,130 @@ class RoutingTests(unittest.TestCase):
 
 
 class GraphFlowTests(unittest.TestCase):
+    @patch("graph.verify_patch_in_sandbox")
+    def test_validated_patch_requires_approval_before_sandbox_verification(
+        self,
+        verify_mock,
+    ):
+        hypothesis_arguments = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "API 入口缺少 user_id 校验",
+                "status": "supported",
+                "confidence": 0.75,
+                "supporting_observation_ids": ["obs-001"],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "检查调用方",
+                    "supports_if": "调用方也没有校验",
+                    "rejects_if": "调用方已经校验",
+                },
+            }],
+        })
+        report = json.dumps({
+            "summary": "API 缺少字段校验",
+            "root_cause": "API 直接传递未校验 payload",
+            "claims": [{
+                "claim_id": "C1",
+                "statement": "API 没有检查 user_id",
+                "evidence_ids": ["E1"],
+            }],
+            "evidence": [{
+                "evidence_id": "E1",
+                "observation_id": "obs-001",
+                "source_type": "code",
+                "file": "demo_app/app/api.py",
+                "line_start": 8,
+                "line_end": 10,
+                "commit_hash": None,
+                "runtime_id": None,
+                "description": "API 直接调用 Service",
+            }],
+            "suggested_fixes": ["增加输入校验"],
+            "confidence": "medium",
+        })
+        diff = (
+            "diff --git a/demo_app/app/api.py b/demo_app/app/api.py\n"
+            "--- a/demo_app/app/api.py\n"
+            "+++ b/demo_app/app/api.py\n"
+            "@@ -8,3 +8,5 @@\n"
+            " def post_users(payload: dict, connection: sqlite3.Connection) -> dict:\n"
+            "+    if \"user_id\" not in payload:\n"
+            "+        return {\"status\": 400, \"error\": \"missing user_id\"}\n"
+            "     create_user(payload, connection)\n"
+            "     return {\"status\": 201}"
+        )
+        proposal = json.dumps({
+            "diagnosis_claim_ids": ["C1"],
+            "changed_files": ["demo_app/app/api.py"],
+            "unified_diff": diff,
+            "rationale": "在 API 边界验证必填字段",
+            "risks": ["需要确认 400 或 422 契约"],
+            "verification_check_ids": ["demo_smoke_suite"],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"demo_app/app/api.py"}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-hypothesis", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": hypothesis_arguments,
+                },
+            }]),
+            FakeMessage(content=report),
+            FakeMessage(content=proposal),
+        ])
+        state = initial_state()
+        state["patch_requested"] = True
+        state["patch_verification_requested"] = True
+        state["patch_verification_decision"] = None
+        state["patch_verification_approval_count"] = 0
+        state["patch_verification"] = None
+        state["runtime_tools_enabled"] = True
+        source = Path("demo_app/app/api.py").read_bytes()
+        saver = InMemorySaver()
+        app = build_agent_graph(client, test_config(), checkpointer=saver)
+        runtime = {"configurable": {"thread_id": "patch-verification-test"}}
+
+        interrupted = app.invoke(state, config=runtime)
+
+        self.assertIn("__interrupt__", interrupted)
+        self.assertEqual(interrupted["patch_proposal"]["status"], "validated")
+        request = interrupted["__interrupt__"][0].value
+        self.assertEqual(request["reason"], "patch_verification")
+        self.assertIn("api_missing_fields_contract", request["message"])
+        verify_mock.assert_not_called()
+        self.assertEqual(Path("demo_app/app/api.py").read_bytes(), source)
+        self.assertNotIn("tools", client.fake_completions.requests[-1])
+        patch_prompt = client.fake_completions.requests[-1]["messages"][1]["content"]
+        self.assertIn("严格 JSON Schema", patch_prompt)
+        self.assertIn("diagnosis_claim_ids", patch_prompt)
+        self.assertIn("demo_missing_user_id", patch_prompt)
+        self.assertIn("不得添加 type、patch_id、status", patch_prompt)
+
+        verify_mock.return_value = PatchVerificationResult(
+            proposal_id="patch-test",
+            status="verified",
+            applied_in_sandbox=True,
+            required_check_ids=["api_missing_fields_contract"],
+        )
+        result = app.invoke(
+            Command(resume={"action": "approve"}),
+            config=runtime,
+        )
+
+        verify_mock.assert_called_once()
+        self.assertEqual(result["patch_verification"]["status"], "verified")
+        self.assertEqual(result["patch_verification_approval_count"], 1)
+        self.assertEqual(Path("demo_app/app/api.py").read_bytes(), source)
+
     def test_tool_result_creates_observation_and_exposes_id(self):
         client = FakeClient([
             FakeMessage(tool_calls=[{
@@ -448,6 +614,9 @@ class GraphFlowTests(unittest.TestCase):
         self.assertTrue(result["synthesis_attempted"])
         self.assertTrue(result["repair_attempted"])
         self.assertNotIn("tools", client.fake_completions.requests[-1])
+        repair_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
+        self.assertIn("suggested_fixes 必须是字符串数组", repair_prompt)
+        self.assertIn("Claim.evidence_ids", repair_prompt)
 
     def test_fallback_preserves_grounded_supported_hypothesis(self):
         client = FakeClient([
@@ -491,6 +660,7 @@ class GraphFlowTests(unittest.TestCase):
                 "rejects_if": "配置一致",
             },
         }]
+        state["patch_requested"] = True
 
         result = build_agent_graph(client, test_config()).invoke(state)
 
@@ -499,6 +669,8 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(result["report"]["confidence"], "medium")
         self.assertEqual(result["report"]["evidence"][0]["observation_id"], "obs-001")
         self.assertEqual(len(result["validation_errors"]), 3)
+        self.assertTrue(result["patch_attempted"])
+        self.assertIn("Patch Proposal 已跳过", result["patch_validation_errors"][0])
 
     def test_confirmed_hypothesis_with_independent_sources_stops_early(self):
         hypothesis_arguments = json.dumps({
@@ -534,6 +706,8 @@ class GraphFlowTests(unittest.TestCase):
         self.assertTrue(result["synthesis_attempted"])
         self.assertEqual(result["hypotheses"][0]["status"], "confirmed")
         self.assertEqual(result["step_count"], 3)
+        synthesis_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
+        self.assertIn("严格 JSON Schema", synthesis_prompt)
 
     def test_evidence_confirmed_at_max_step_is_not_counted_as_early_stop(self):
         hypothesis_arguments = json.dumps({

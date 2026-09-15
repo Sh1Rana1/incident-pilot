@@ -1,4 +1,4 @@
-"""V11 工具 Observation 提取与代码、文档、Git、Harness Runtime 来源验证。"""
+"""V12.1.1 工具 Observation 与代码、文档、Git、Harness Runtime 来源验证。"""
 
 import hashlib
 import json

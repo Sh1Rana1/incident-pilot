@@ -1,4 +1,4 @@
-"""IncidentPilot V11 假设驱动、Safe Test Harness 与来源验证图。"""
+"""IncidentPilot V13：落地报告、Patch Proposal 与隔离验证。"""
 
 import json
 import hashlib
@@ -29,9 +29,19 @@ from models import (
     Evidence,
     HumanReviewRequest,
     IncidentReport,
+    PatchProposal,
+    PatchProposalDraft,
+    PatchVerificationResult,
     ToolResult,
     ToolObservation,
 )
+from patching import (
+    build_patch_output_contract,
+    build_patch_source_context,
+    parse_patch_draft,
+    validate_patch_draft,
+)
+from patch_verification import required_patch_checks, verify_patch_in_sandbox
 from provenance import build_observation, validate_report_provenance
 from registry import registry
 from runtime_tools import (
@@ -41,7 +51,7 @@ from runtime_tools import (
     reset_runtime_timeout,
 )
 from tool_profiles import RUNTIME_EXECUTION_TOOLS
-import harness  # noqa: F401：导入时注册 V11 Harness 工具
+import harness  # noqa: F401：导入时注册 Harness 工具
 import tools  # noqa: F401：导入时触发工具注册
 
 
@@ -118,16 +128,28 @@ class AgentState(TypedDict):
     runtime_ledger_path: Optional[str]
     thread_id: str
     recalled_memory_count: int
+    patch_requested: bool
+    patch_attempted: bool
+    patch_proposal: Optional[dict]
+    patch_validation_errors: Annotated[list[str], operator.add]
+    patch_verification_requested: bool
+    patch_verification_decision: Optional[str]
+    patch_verification_approval_count: int
+    patch_verification: Optional[dict]
 
 
-def response_format(config: AppConfig):
+def response_format(
+    config: AppConfig,
+    schema_model=IncidentReport,
+    schema_name: str = "incident_report",
+):
     if config.output_mode == "json_schema":
         return {
             "type": "json_schema",
             "json_schema": {
-                "name": "incident_report",
+                "name": schema_name,
                 "strict": True,
-                "schema": IncidentReport.model_json_schema(),
+                "schema": schema_model.model_json_schema(),
             },
         }
     if config.output_mode == "json_object":
@@ -189,6 +211,12 @@ def route_after_model(state: AgentState) -> str:
 
 def route_after_validation(state: AgentState) -> str:
     if state.get("report") is not None:
+        if (
+            state.get("patch_requested")
+            and not state.get("patch_attempted")
+            and state.get("stop_reason") == "completed"
+        ):
+            return "propose_patch"
         return "end"
     if state.get("synthesis_attempted"):
         if state.get("repair_attempted"):
@@ -202,6 +230,25 @@ def route_after_validation(state: AgentState) -> str:
     ):
         return "synthesize_report"
     return "call_model"
+
+
+def route_after_patch_proposal(state: AgentState) -> str:
+    proposal = state.get("patch_proposal")
+    if (
+        state.get("patch_verification_requested")
+        and proposal is not None
+        and proposal.get("status") == "validated"
+    ):
+        return "patch_review"
+    return "end"
+
+
+def route_after_patch_review(state: AgentState) -> str:
+    return (
+        "verify_patch"
+        if state.get("patch_verification_decision") == "approve"
+        else "end"
+    )
 
 
 def route_after_tools(state: AgentState) -> str:
@@ -268,14 +315,56 @@ def parse_incident_report(content: str) -> IncidentReport:
     raise last_error
 
 
-def format_report_validation_error(exc: ValidationError) -> str:
-    """保留可操作的字段路径与原因，供修复节点和评测 JSON 审计。"""
+def format_validation_error(
+    exc: ValidationError,
+    *,
+    label: str = "最终报告",
+) -> str:
+    """保留可操作的字段路径与原因，供终端和评测 JSON 审计。"""
     details = []
     for item in exc.errors(include_url=False)[:8]:
         location = ".".join(str(part) for part in item.get("loc", ())) or "report"
         details.append(f"{location}: {item.get('msg', 'invalid value')}")
     suffix = "；其余错误已省略" if exc.error_count() > len(details) else ""
-    return f"最终报告有 {exc.error_count()} 处格式错误：" + "；".join(details) + suffix
+    return f"{label}有 {exc.error_count()} 处格式错误：" + "；".join(details) + suffix
+
+
+def format_report_validation_error(exc: ValidationError) -> str:
+    """兼容原报告修复路径使用的错误格式。"""
+    return format_validation_error(exc)
+
+
+def build_report_output_contract(state: AgentState) -> str:
+    """为 json_object 服务商提供严格报告 Schema 和可引用来源白名单。"""
+    allowed_sources = []
+    for raw in state.get("observations", []):
+        observation = ToolObservation.model_validate(raw)
+        if not observation.ok:
+            continue
+        allowed_sources.append({
+            "observation_id": observation.observation_id,
+            "sources": [source.model_dump(mode="json") for source in observation.sources],
+        })
+    schema = json.dumps(
+        IncidentReport.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    sources = json.dumps(
+        allowed_sources,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "只输出一个符合下列 JSON Schema 的对象，不得增加 gaps、analysis、type "
+        "或其他顶层字段。suggested_fixes 必须是字符串数组，不能放对象。\n"
+        f"严格 JSON Schema：\n{schema}\n"
+        "Evidence.observation_id 只能从下方成功 Observation 中选择；file、行号、"
+        "commit_hash 和 runtime_id 必须复制对应 source。Evidence 自己创建 E1、E2 "
+        "等 evidence_id；每个 Claim.evidence_ids 只能引用最终 evidence 数组中真实"
+        "存在的 evidence_id，不能引用 Observation ID 或被省略的 Evidence。\n"
+        f"允许引用的 Observation 与来源：\n{sources}"
+    )
 
 
 def build_agent_graph(
@@ -665,6 +754,7 @@ def build_agent_graph(
         else:
             print("调查预算已用完或检测到重复调用，正在根据已有证据生成最终报告。")
         compacted_messages, compacted = request_messages(state, final_report=True)
+        report_contract = build_report_output_contract(state)
         messages = compacted_messages + [{
             "role": "user",
             "content": (
@@ -674,6 +764,7 @@ def build_agent_graph(
                 "如果假设仍是 supported，只能输出 medium 或 low，不能输出 high；"
                 "即使证据不足，也要说明缺少什么、降低 confidence，并给出下一步建议；"
                 "不要返回空白兜底说明。"
+                "\n\n" + report_contract
             ),
         }]
         request = {"model": config.model, "messages": messages}
@@ -736,6 +827,167 @@ def build_agent_graph(
             "validation_errors": [error],
         }
 
+    def propose_patch(state: AgentState) -> dict:
+        """显式请求时生成一次候选 diff；本节点和校验器都不写业务文件。"""
+        report = IncidentReport.model_validate(state["report"])
+        if report.confidence == "low" or not report.claims or not report.evidence:
+            error = "低置信度或缺少 Claim/Evidence，V13 拒绝生成补丁"
+            return {
+                "patch_attempted": True,
+                "patch_proposal": None,
+                "patch_validation_errors": [error],
+            }
+        source_context = build_patch_source_context(report)
+        if not source_context:
+            error = "报告没有可用于生成补丁的已落地代码 Evidence"
+            return {
+                "patch_attempted": True,
+                "patch_proposal": None,
+                "patch_validation_errors": [error],
+            }
+        try:
+            output_contract = build_patch_output_contract()
+        except (OSError, ValueError) as exc:
+            error = f"无法读取 Patch 输出契约或 Harness 清单: {exc}"
+            return {
+                "patch_attempted": True,
+                "patch_proposal": None,
+                "patch_validation_errors": [error],
+            }
+        request = {
+            "model": config.model,
+            "messages": [{
+                "role": "system",
+                "content": (
+                    "你是只读补丁设计器。只能根据已验证诊断报告和其中已经读取的"
+                    "代码文件生成最小 unified diff。不能创建、删除或重命名文件；"
+                    "不能修改测试、Harness、Evaluation、配置或内部基础设施。"
+                    "必须严格服从用户消息中的六字段 JSON Schema。"
+                    "changed_files 必须与 diff 文件头完全一致；diagnosis_claim_ids 必须"
+                    "引用报告中的真实 Claim；verification_check_ids 只能选择已登记的"
+                    " Harness ID。只输出 JSON，不执行也不声称已经应用补丁。"
+                ),
+            }, {
+                "role": "user",
+                "content": (
+                    "已验证诊断报告：\n"
+                    + report.model_dump_json(indent=2)
+                    + "\n\n允许参考的当前代码（行号仅供定位，不要写入 diff 内容）：\n"
+                    + source_context
+                    + "\n\nPatchProposalDraft 输出契约：\n"
+                    + output_contract
+                    + "\n\n请严格按上述契约输出 JSON。unified_diff 必须使用标准 "
+                    "diff --git、---/+++ 和精确 @@ 行数，且上下文必须匹配当前文件。"
+                ),
+            }],
+        }
+        output_format = response_format(
+            config,
+            PatchProposalDraft,
+            "patch_proposal_draft",
+        )
+        if output_format is not None:
+            request["response_format"] = output_format
+        response = client.chat.completions.create(**request)
+        message = assistant_message_to_dict(response.choices[0].message)
+        errors: list[str] = []
+        proposal = None
+        try:
+            draft = parse_patch_draft(message.get("content") or "")
+            proposal = validate_patch_draft(draft, report)
+            errors = proposal.validation_errors
+        except ValidationError as exc:
+            errors = [format_validation_error(exc, label="补丁提案")]
+        return {
+            "messages": [message],
+            "patch_attempted": True,
+            "patch_proposal": proposal.model_dump() if proposal else None,
+            "patch_validation_errors": errors,
+            **_model_usage_update(state, response),
+        }
+
+    def patch_review(state: AgentState) -> dict:
+        """在任何临时写入或子进程启动前请求一次独立补丁验证批准。"""
+        proposal = PatchProposal.model_validate(state["patch_proposal"])
+        if not state.get("runtime_tools_enabled"):
+            result = PatchVerificationResult(
+                proposal_id=proposal.proposal_id,
+                status="rejected",
+                validation_errors=[
+                    "Patch 验证需要 ENABLE_RUNTIME_TOOLS=true；未创建临时目录或运行检查"
+                ],
+            )
+            return {
+                "patch_verification_decision": "deny",
+                "patch_verification": result.model_dump(),
+            }
+        try:
+            manifest, _digest = harness.load_harness_manifest()
+        except ValueError as exc:
+            result = PatchVerificationResult(
+                proposal_id=proposal.proposal_id,
+                status="rejected",
+                validation_errors=[f"无法读取 Harness 清单: {exc}"],
+            )
+            return {
+                "patch_verification_decision": "deny",
+                "patch_verification": result.model_dump(),
+            }
+        required_ids = [
+            item.check_id
+            for item in required_patch_checks(proposal, manifest.checks)
+        ]
+        request = HumanReviewRequest(
+            reason="patch_verification",
+            message=(
+                f"是否允许在临时隔离目录应用 {proposal.proposal_id}，并在补丁前后"
+                f"运行预登记检查：{', '.join(required_ids)}？"
+                "覆盖目标文件的契约检查会自动加入，正式工作区不会修改。"
+            ),
+            model_call_count=state.get("model_call_count", 0),
+            tool_call_count=state.get("tool_call_count", 0),
+            hypotheses=[
+                DiagnosticHypothesis.model_validate(item)
+                for item in state.get("hypotheses", [])
+            ],
+            allowed_actions=["approve", "deny", "cancel"],
+        )
+        decision = interrupt(request.model_dump(mode="json"))
+        action = (
+            str(decision.get("action", "deny")).lower()
+            if isinstance(decision, dict)
+            else str(decision).lower()
+        )
+        if action != "approve":
+            result = PatchVerificationResult(
+                proposal_id=proposal.proposal_id,
+                status="denied",
+                validation_errors=[
+                    "用户取消或拒绝了隔离补丁验证；未创建临时目录或运行检查"
+                ],
+            )
+            return {
+                "patch_verification_decision": "deny",
+                "patch_verification": result.model_dump(),
+            }
+        return {
+            "patch_verification_decision": "approve",
+            "patch_verification_approval_count": (
+                state.get("patch_verification_approval_count", 0) + 1
+            ),
+        }
+
+    def verify_patch(state: AgentState) -> dict:
+        """批准后在临时副本确定性应用和测试，不再请求模型。"""
+        proposal = PatchProposal.model_validate(state["patch_proposal"])
+        report = IncidentReport.model_validate(state["report"])
+        result = verify_patch_in_sandbox(
+            proposal,
+            report,
+            hard_timeout_seconds=config.runtime_timeout_seconds,
+        )
+        return {"patch_verification": result.model_dump()}
+
     def repair_report(state: AgentState) -> dict:
         """强制总结格式不合法时，再进行一次无工具的结构化修复。"""
         print("最终报告格式不合法，正在进行一次无工具格式修复。")
@@ -744,6 +996,7 @@ def build_agent_graph(
             include_last_assistant=True,
             final_report=True,
         )
+        report_contract = build_report_output_contract(state)
         messages = compacted_messages + [{
             "role": "user",
             "content": (
@@ -753,6 +1006,7 @@ def build_agent_graph(
                 "必须逐项解决压缩记忆中的 last_validation_error；若 high 缺少 confirmed "
                 "假设就降为 medium/low，不要丢弃已经落地的成功证据；"
                 "Git 提交使用 commit_hash，不能把目录、unknown 或 N/A 当作文件。"
+                "\n\n" + report_contract
             ),
         }]
         request = {"model": config.model, "messages": messages}
@@ -883,7 +1137,16 @@ def build_agent_graph(
                 suggested_fixes=["提供完整 traceback、实际启动命令和当前工作目录后重试。"],
                 confidence="low",
             )
-        return {"report": report.model_dump(), "stop_reason": "invalid_synthesis"}
+        result = {"report": report.model_dump(), "stop_reason": "invalid_synthesis"}
+        if state.get("patch_requested"):
+            result.update({
+                "patch_attempted": True,
+                "patch_validation_errors": [
+                    "诊断报告未通过模型格式与来源验证，系统仅生成降级报告；"
+                    "为避免基于不可靠结构修改代码，Patch Proposal 已跳过"
+                ],
+            })
+        return result
 
     def build_cancelled(state: AgentState) -> dict:
         report = IncidentReport(
@@ -904,6 +1167,9 @@ def build_agent_graph(
     builder.add_node("repair_report", repair_report)
     builder.add_node("human_review", human_review)
     builder.add_node("validate_report", validate_report)
+    builder.add_node("propose_patch", propose_patch)
+    builder.add_node("patch_review", patch_review)
+    builder.add_node("verify_patch", verify_patch)
     builder.add_node("build_fallback", build_fallback)
     builder.add_node("build_cancelled", build_cancelled)
     builder.add_edge(START, "call_model")
@@ -933,10 +1199,20 @@ def build_agent_graph(
     builder.add_conditional_edges("validate_report", route_after_validation, {
         "call_model": "call_model",
         "end": END,
+        "propose_patch": "propose_patch",
         "build_fallback": "build_fallback",
         "synthesize_report": "synthesize_report",
         "repair_report": "repair_report",
     })
+    builder.add_conditional_edges("propose_patch", route_after_patch_proposal, {
+        "patch_review": "patch_review",
+        "end": END,
+    })
+    builder.add_conditional_edges("patch_review", route_after_patch_review, {
+        "verify_patch": "verify_patch",
+        "end": END,
+    })
+    builder.add_edge("verify_patch", END)
     builder.add_edge("build_fallback", END)
     builder.add_edge("build_cancelled", END)
     return builder.compile(checkpointer=checkpointer)

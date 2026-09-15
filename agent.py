@@ -1,4 +1,4 @@
-"""IncidentPilot V10 公开入口：保留单进程诊断的兼容接口。"""
+"""IncidentPilot V13 公开入口：诊断、补丁提案与可选隔离验证。"""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -16,6 +16,8 @@ from models import (
     DiagnosticHypothesis,
     HumanReviewRequest,
     IncidentReport,
+    PatchProposal,
+    PatchVerificationResult,
     RunMetrics,
     ToolObservation,
 )
@@ -43,10 +45,14 @@ def run_agent_detailed(
     human_review: bool = False,
     review_handler: HumanReviewHandler | None = None,
     allow_runtime_execution: bool = False,
+    generate_patch_proposal: bool = False,
+    verify_patch_proposal: bool = False,
 ) -> AgentRunResult:
     """运行状态图，并返回最终报告和可用于评测的运行指标。"""
     if human_review and review_handler is None:
         raise ValueError("启用 human_review 时必须提供 review_handler")
+    if verify_patch_proposal and review_handler is None:
+        raise ValueError("验证补丁时必须提供 review_handler 进行独立审批")
     client, config = create_client()
     profile_name, profile_tools = resolve_tool_profile(tool_profile)
     runtime_tools_enabled = bool(
@@ -124,6 +130,14 @@ def run_agent_detailed(
         "runtime_ledger_path": None,
         "thread_id": resolved_thread_id,
         "recalled_memory_count": 0,
+        "patch_requested": generate_patch_proposal or verify_patch_proposal,
+        "patch_attempted": False,
+        "patch_proposal": None,
+        "patch_validation_errors": [],
+        "patch_verification_requested": verify_patch_proposal,
+        "patch_verification_decision": None,
+        "patch_verification_approval_count": 0,
+        "patch_verification": None,
     }
     runtime_config = {
         "configurable": {"thread_id": resolved_thread_id},
@@ -150,6 +164,16 @@ def run_agent_detailed(
         for item in final_state.get("hypotheses", [])
     ]
     report = IncidentReport.model_validate(final_state["report"])
+    patch_proposal = (
+        PatchProposal.model_validate(final_state["patch_proposal"])
+        if final_state.get("patch_proposal")
+        else None
+    )
+    patch_verification = (
+        PatchVerificationResult.model_validate(final_state["patch_verification"])
+        if final_state.get("patch_verification")
+        else None
+    )
     referenced_observation_ids = {
         observation_id
         for hypothesis in hypotheses
@@ -229,6 +253,21 @@ def run_agent_detailed(
         runtime_denial_count=final_state.get("runtime_denial_count", 0),
         runtime_replay_count=final_state.get("runtime_replay_count", 0),
         recalled_memory_count=final_state.get("recalled_memory_count", 0),
+        patch_requested=generate_patch_proposal or verify_patch_proposal,
+        patch_proposal_generated=patch_proposal is not None,
+        patch_proposal_valid=bool(
+            patch_proposal and patch_proposal.status == "validated"
+        ),
+        patch_verification_requested=verify_patch_proposal,
+        patch_verification_approval_count=final_state.get(
+            "patch_verification_approval_count", 0
+        ),
+        patch_verification_check_count=(
+            len(patch_verification.check_runs) if patch_verification else 0
+        ),
+        patch_verified=bool(
+            patch_verification and patch_verification.status == "verified"
+        ),
         tool_names=tool_names,
         stop_reason=final_state.get("stop_reason") or "unknown",
         duration_ms=round(duration_ms, 2),
@@ -239,6 +278,9 @@ def run_agent_detailed(
         observations=observations,
         hypotheses=hypotheses,
         validation_errors=final_state.get("validation_errors", []),
+        patch_proposal=patch_proposal,
+        patch_validation_errors=final_state.get("patch_validation_errors", []),
+        patch_verification=patch_verification,
     )
 
 
@@ -252,6 +294,8 @@ def run_agent(
     human_review: bool = False,
     review_handler: HumanReviewHandler | None = None,
     allow_runtime_execution: bool = False,
+    generate_patch_proposal: bool = False,
+    verify_patch_proposal: bool = False,
 ) -> IncidentReport:
     """兼容原有调用方：只返回报告。"""
     return run_agent_detailed(
@@ -264,4 +308,6 @@ def run_agent(
         human_review,
         review_handler,
         allow_runtime_execution,
+        generate_patch_proposal,
+        verify_patch_proposal,
     ).report

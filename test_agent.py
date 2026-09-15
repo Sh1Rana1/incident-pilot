@@ -20,6 +20,7 @@ REPORT = {
 
 class FakeApp:
     def invoke(self, _state, config):
+        self.initial_state = _state
         self.config = config
         return {
             "messages": [
@@ -67,6 +68,31 @@ class InterruptingFakeApp(FakeApp):
 
 
 class AgentEntryTests(unittest.TestCase):
+    @patch("agent.build_agent_graph")
+    @patch("agent.create_client")
+    def test_patch_generation_is_explicit_opt_in(
+        self, create_client, build_graph
+    ) -> None:
+        create_client.return_value = (
+            SimpleNamespace(),
+            AppConfig("key", "https://example.com/v1", "model", "text", False),
+        )
+        fake_app = FakeApp()
+        build_graph.return_value = fake_app
+
+        result = agent.run_agent_detailed(
+            "question",
+            generate_patch_proposal=True,
+        )
+
+        self.assertTrue(fake_app.initial_state["patch_requested"])
+        self.assertTrue(result.metrics.patch_requested)
+        self.assertFalse(result.metrics.patch_proposal_generated)
+
+    def test_patch_verification_requires_review_handler(self) -> None:
+        with self.assertRaisesRegex(ValueError, "独立审批"):
+            agent.run_agent_detailed("question", verify_patch_proposal=True)
+
     @patch("agent.build_agent_graph", return_value=FakeApp())
     @patch("agent.create_client")
     def test_detailed_result_contains_metrics(self, create_client, build_graph) -> None:

@@ -1,4 +1,4 @@
-"""V11 统一数据模型：会话、长期记忆、验证轨迹与证据链。"""
+"""V12.1.1 统一数据模型：诊断证据、只读补丁提案、会话与指标。"""
 
 from typing import Any, Literal, Optional
 
@@ -125,6 +125,59 @@ class IncidentReport(StrictModel):
     confidence: Literal["low", "medium", "high"]
 
 
+class PatchProposalDraft(StrictModel):
+    """模型生成的候选内容；不允许模型声明验证状态或提案 ID。"""
+
+    diagnosis_claim_ids: list[str] = Field(min_length=1, max_length=10)
+    changed_files: list[str] = Field(min_length=1, max_length=3)
+    unified_diff: str = Field(min_length=1, max_length=50_000)
+    rationale: str = Field(min_length=1, max_length=2_000)
+    risks: list[str] = Field(max_length=10)
+    verification_check_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class PatchProposal(PatchProposalDraft):
+    """经过本地确定性规则验证的只读补丁提案。"""
+
+    proposal_id: str
+    status: Literal["validated", "rejected"]
+    validation_errors: list[str] = Field(default_factory=list)
+
+
+class PatchCheckRun(StrictModel):
+    """V13 隔离工作区中一次预登记检查的结构化结果。"""
+
+    check_id: str
+    phase: Literal["baseline", "patched"]
+    purpose: Literal["reproduction", "regression"]
+    exit_code: Optional[int] = None
+    expected_exit_codes: list[int] = Field(default_factory=list)
+    expectation_met: bool = False
+    success_criterion_met: bool = False
+    passed_count: int = 0
+    failed_count: int = 0
+    failed_tests: list[str] = Field(default_factory=list)
+    timed_out: bool = False
+    stdout_excerpt: str = ""
+    stderr_excerpt: str = ""
+    error: Optional[str] = None
+    duration_ms: float = 0.0
+
+
+class PatchVerificationResult(StrictModel):
+    """候选补丁在临时隔离副本中的验证结果；不代表正式工作区已修改。"""
+
+    proposal_id: str
+    status: Literal["verified", "failed", "rejected", "denied"]
+    applied_in_sandbox: bool = False
+    workspace_unchanged: bool = True
+    sandbox_cleaned: bool = True
+    required_check_ids: list[str] = Field(default_factory=list)
+    check_runs: list[PatchCheckRun] = Field(default_factory=list)
+    validation_errors: list[str] = Field(default_factory=list)
+    duration_ms: float = 0.0
+
+
 MemoryStatus = Literal["pending", "approved", "rejected"]
 
 
@@ -187,6 +240,13 @@ class RunMetrics(StrictModel):
     runtime_denial_count: int = Field(default=0)
     runtime_replay_count: int = Field(default=0)
     recalled_memory_count: int = Field(default=0)
+    patch_requested: bool = Field(default=False)
+    patch_proposal_generated: bool = Field(default=False)
+    patch_proposal_valid: bool = Field(default=False)
+    patch_verification_requested: bool = Field(default=False)
+    patch_verification_approval_count: int = Field(default=0)
+    patch_verification_check_count: int = Field(default=0)
+    patch_verified: bool = Field(default=False)
     tool_names: list[str] = Field(description="按请求顺序记录的工具名")
     stop_reason: str
     duration_ms: float
@@ -201,3 +261,6 @@ class AgentRunResult(StrictModel):
         default_factory=list,
         description="本次运行历次报告格式、假设准备度和来源验证错误",
     )
+    patch_proposal: Optional[PatchProposal] = None
+    patch_validation_errors: list[str] = Field(default_factory=list)
+    patch_verification: Optional[PatchVerificationResult] = None

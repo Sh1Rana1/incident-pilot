@@ -103,6 +103,25 @@ class SessionStoreTests(unittest.TestCase):
                 self.assertEqual(record.pending_review.reason, "runtime_execution")
                 self.assertEqual(reopened.list()[0].thread_id, "thread-1")
 
+    def test_patch_review_has_distinct_persistent_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite3"
+            with SessionStore(path) as store:
+                store.create("patch-thread", "fix", "full_runtime", True)
+                request = HumanReviewRequest(
+                    reason="patch_verification",
+                    message="verify patch?",
+                    model_call_count=3,
+                    tool_call_count=4,
+                    hypotheses=[],
+                    allowed_actions=["approve", "deny", "cancel"],
+                )
+
+                record = store.mark_waiting("patch-thread", request)
+
+                self.assertEqual(record.status, "waiting_for_patch_approval")
+                self.assertEqual(record.pending_review.reason, "patch_verification")
+
     @patch("runtime_tools.subprocess.run")
     @patch("session_agent.create_client")
     def test_graph_resumes_after_store_is_closed_and_runtime_runs_once(

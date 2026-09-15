@@ -1,4 +1,4 @@
-"""V11 安全测试 Harness 测试；不调用模型 API。"""
+"""V12.1.1 安全测试 Harness 测试；不调用模型 API。"""
 
 import json
 import os
@@ -46,6 +46,19 @@ class HarnessTests(unittest.TestCase):
         self.assertNotIn("target", first)
         self.assertNotIn("argv", first)
         self.assertNotIn("command", first)
+        self.assertIn("purpose", first)
+        self.assertIn("covers_files", first)
+
+    def test_api_contract_check_detects_current_bug(self) -> None:
+        result = call_harness(
+            "run_check",
+            {"check_id": "api_missing_fields_contract"},
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["purpose"], "regression")
+        self.assertFalse(result.data["expectation_met"])
+        self.assertGreaterEqual(result.data["failed_count"], 1)
 
     def test_run_check_schema_rejects_model_supplied_execution_fields(self) -> None:
         result = call_harness("run_check", {

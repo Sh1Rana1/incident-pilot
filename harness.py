@@ -1,4 +1,4 @@
-"""V11 安全测试 Harness：模型只选择 check_id，命令由受信清单构造。"""
+"""V12.1.1 安全测试 Harness：模型只选择 check_id，命令由受信清单构造。"""
 
 import hashlib
 import json
@@ -65,6 +65,8 @@ class HarnessCheck(StrictModel):
     description: str = Field(min_length=1, max_length=300)
     timeout_seconds: int = Field(ge=1, le=120)
     expected_exit_codes: list[int] = Field(min_length=1, max_length=8)
+    purpose: Literal["reproduction", "regression"] = "regression"
+    covers_files: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("check_id")
     @classmethod
@@ -80,6 +82,19 @@ class HarnessCheck(StrictModel):
             raise ValueError("expected_exit_codes 不能重复")
         if any(item < 0 or item > 255 for item in value):
             raise ValueError("expected_exit_codes 必须在 0 到 255 之间")
+        return value
+
+    @field_validator("covers_files")
+    @classmethod
+    def validate_covered_files(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("covers_files 不能重复")
+        for relative in value:
+            if not relative or "\\" in relative or relative.startswith("/"):
+                raise ValueError("covers_files 必须使用 POSIX 项目相对路径")
+            parts = Path(relative).parts
+            if ".." in parts or "." in parts:
+                raise ValueError("covers_files 不能离开项目根目录")
         return value
 
     @model_validator(mode="after")
@@ -170,7 +185,10 @@ def _check_digest(check: HarnessCheck) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _command_for_check(check: HarnessCheck) -> tuple[list[str], list[str]]:
+def _command_for_check(
+    check: HarnessCheck,
+    root: Path = ROOT,
+) -> tuple[list[str], list[str]]:
     if check.runner == "demo_case":
         argv = [sys.executable, "-m", "demo_app.run_case", check.target]
         display = ["<current-python>", "-m", "demo_app.run_case", check.target]
@@ -178,7 +196,7 @@ def _command_for_check(check: HarnessCheck) -> tuple[list[str], list[str]]:
         argv = [sys.executable, "-m", "unittest", "-q", check.target]
         display = ["<current-python>", "-m", "unittest", "-q", check.target]
     else:
-        relative = _resolve_pytest_target(check.target).relative_to(ROOT).as_posix()
+        relative = _resolve_pytest_target(check.target, root).relative_to(root).as_posix()
         argv = [sys.executable, "-m", "pytest", "-q", relative]
         display = ["<current-python>", "-m", "pytest", "-q", relative]
     return argv, display
@@ -233,6 +251,8 @@ def list_checks_tool(_arguments: ListChecksArgs) -> ToolResult:
                 "description": check.description,
                 "timeout_seconds": check.timeout_seconds,
                 "expected_exit_codes": check.expected_exit_codes,
+                "purpose": check.purpose,
+                "covers_files": check.covers_files,
             }
             for check in manifest.checks
         ],
@@ -329,6 +349,8 @@ def run_check_tool(arguments: RunCheckArgs) -> ToolResult:
         "check_definition_sha256": _check_digest(check),
         "exit_code": completed.returncode,
         "expected_exit_codes": check.expected_exit_codes,
+        "purpose": check.purpose,
+        "covers_files": check.covers_files,
         "expectation_met": completed.returncode in check.expected_exit_codes,
         "passed_count": passed_count,
         "failed_count": failed_count,
