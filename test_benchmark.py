@@ -70,6 +70,13 @@ class BenchmarkManifestTests(unittest.TestCase):
         self.assertFalse(any("/incidents/" in f"/{source}" for source in sources))
         self.assertIn("demo_app/docs/api.md", sources)
 
+    def test_business_code_has_no_embedded_answer_markers(self):
+        forbidden = ("BUG-", "故意没有释放", "故意保留了迁移前")
+        for path in (ROOT / "demo_app" / "app").glob("*.py"):
+            content = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertFalse(any(marker in content for marker in forbidden))
+
     def test_baseline_path_is_scoped_and_rejects_traversal(self):
         path = _baseline_output_path("v13", "v14.1", "development", "stamp")
         self.assertEqual(path.parent.name, "v13")

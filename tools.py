@@ -23,20 +23,15 @@ INTERNAL_ONLY_DIRS = {
 }
 INTERNAL_ONLY_FILES = {
     "harness.json",
+    "harness.py",
+    "runtime_tools.py",
+    "doctor.py",
     "evaluation.py",
     "benchmark.py",
     "experiments.py",
     "run_evals.py",
-    "test_evaluation.py",
-    "test_benchmark.py",
-    "test_experiments.py",
-    "test_demo_app.py",
-    "test_runtime_tools.py",
-    "test_harness.py",
     "patching.py",
     "patch_verification.py",
-    "test_patching.py",
-    "test_patch_verification.py",
 }
 SENSITIVE_FILES = {"api.env", ".env", ".env.local", ".env.production"}
 SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}
@@ -63,14 +58,20 @@ def _safe_path(relative_path: str) -> Path:
 
 
 def _is_ignored(path: Path) -> bool:
-    return path.name in INTERNAL_ONLY_FILES or any(
+    return _is_internal_filename(path) or any(
         part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts
     )
 
 
 def _is_internal_only(path: Path) -> bool:
-    return path.name in INTERNAL_ONLY_FILES or any(
+    return _is_internal_filename(path) or any(
         part in INTERNAL_ONLY_DIRS for part in path.relative_to(PROJECT_ROOT).parts
+    )
+
+
+def _is_internal_filename(path: Path) -> bool:
+    return path.name in INTERNAL_ONLY_FILES or (
+        path.suffix.lower() == ".py" and path.name.startswith("test_")
     )
 
 

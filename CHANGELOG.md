@@ -22,9 +22,11 @@
 - 移除三份直接写出旧案例根因的事故文档；原评测改为引用 API、数据库和 Runbook 契约，RAG 指纹会自动重建。
 - 新增 `_benchmark_manifest.json`，冻结五个 development、一个 hidden、两个 challenge 和一个 runtime 案例。连接泄漏的两个变体不再冒充未见故障泛化。
 - `run_evals.py` 默认只选 development；跨集合案例会被拒绝。正式 baseline 要求干净工作区，报告写入独立目录且禁止覆盖，并记录提交、数据摘要、模型配置和预算元数据。
-- 新增十五项离线测试，总计 170 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
+- 首次单案例烟雾运行发现 `test_graph.py`、Harness/Runtime 实现仍可被搜索，报告引用测试答案后获得 1/1；该结果已隔离并标记 invalid，不计入基线。
+- 文件工具现在统一隐藏所有 `test_*.py` 及 Harness、Runtime、doctor、Benchmark 实现；同时清理业务代码中的答案式 BUG 注释和故障提示性 docstring。
+- 新增十七项离线测试，总计 172 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
 - 保持 graph.py、Prompt、模型/工具调用预算、上下文压缩、假设协议及评分器原样；兼容 run_demo_case 仍为 V13 的四个案例，新增案例使用 run_check。
-- 尚未运行真实 development baseline；未产生通过率提升或 Token 优化结论。
+- 尚未产生有效的 development baseline；未产生通过率提升或 Token 优化结论。
 
 ## V13：Patch Sandbox Verification（隔离补丁验证）
 

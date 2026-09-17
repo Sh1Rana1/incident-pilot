@@ -1,10 +1,12 @@
 # IncidentPilot V14.1 · Benchmark 首批扩充（V13 Agent）
 
-当前增加两个离线故障案例：异步资料查询与订单支付重试。共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。Agent 控制流、Prompt、预算、报告校验和评分规则保持 V13；本阶段未运行真实模型，也尚无 V14 性能提升数据。
+当前增加两个离线故障案例：异步资料查询与订单支付重试。共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。Agent 控制流、Prompt、预算、报告校验和评分规则保持 V13；尚无可用的正式 V13 基线或 V14 性能提升数据。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
-本阶段补上文件工具对 `checks` 目录的隔离，新增检查源码、Fixture、Eval 均不能通过 read/search/list 获取；这是一项基线差异，后续对照应对两版应用相同隔离边界。三个直接写出旧案例根因和修复的事故文档已移除，Evaluation 改为引用正常的 API、数据库和 Runbook 契约。`_benchmark_manifest.json` 冻结开发、hidden、challenge 和 Runtime 集合，默认实验只选择 development。
+本阶段补上所有 `test_*.py`、`checks`、Harness/Runtime 实现、Fixture 和 Eval 的文件工具隔离。三个直接写出旧案例根因和修复的事故文档已移除，业务代码中的答案式注释也已清理；Evaluation 改为引用正常的 API、数据库和 Runbook 契约。`_benchmark_manifest.json` 冻结开发、hidden、challenge 和 Runtime 集合，默认实验只选择 development。
+
+2026-09-18 首次 `missing_user_id + full` 烟雾运行虽然得到 1/1，但搜索结果暴露了 `test_graph.py`，最终报告还把测试中的标准结论列为 Evidence，因此该报告已移入 `.incident_reports/quarantine/v13/` 并标记 invalid，不能作为基线或简历数据。发现后的隔离修复只做离线验证，尚未再次调用模型。
 
 新增案例可离线复现：
 
@@ -1356,7 +1358,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 170 项测试，覆盖：
+当前共有 172 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；

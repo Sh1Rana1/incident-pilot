@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from pathlib import Path
 
 from config import resolve_capabilities
 from main import format_report
@@ -130,6 +131,33 @@ class FileToolTests(unittest.TestCase):
         self.assertFalse(any(
             item["path"] in {"evaluation.py", "test_evaluation.py"}
             for item in searched.data["matches"]
+        ))
+
+    def test_all_tests_and_runtime_internals_are_hidden(self) -> None:
+        blocked = {
+            "test_graph.py", "test_doctor.py", "harness.py",
+            "runtime_tools.py", "doctor.py", "benchmark.py",
+        }
+        listed = call_tool("list_files", {"path": ".", "max_depth": 1})
+        listed_paths = {item["path"] for item in listed.data["entries"]}
+        self.assertFalse(blocked & listed_paths)
+        for path in blocked:
+            with self.subTest(path=path):
+                self.assertFalse(call_tool("read_file", {"path": path}).ok)
+        searched = call_tool(
+            "search_code", {"query": "API 入口缺少 user_id 校验"}
+        )
+        self.assertTrue(searched.ok)
+        self.assertFalse(any(
+            item["path"].startswith("test_") or item["path"] in blocked
+            for item in searched.data["matches"]
+        ))
+        broad_search = call_tool("search_code", {"query": "user_id"})
+        self.assertTrue(broad_search.ok)
+        self.assertFalse(any(
+            Path(item["path"]).name.startswith("test_")
+            or Path(item["path"]).name in blocked
+            for item in broad_search.data["matches"]
         ))
 
     def test_demo_answer_tests_are_hidden_during_agent_run(self) -> None:
