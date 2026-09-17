@@ -12,6 +12,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from graph import (
     SYSTEM_PROMPT,
+    _covered_read_observation,
+    _next_action_catalog,
+    _select_next_action,
     build_agent_graph,
     build_report_output_contract,
     route_after_model,
@@ -21,7 +24,12 @@ from graph import (
     parse_incident_report,
     tool_call_signature,
 )
-from models import PatchVerificationResult
+from models import (
+    DiagnosticHypothesis,
+    ObservedSource,
+    PatchVerificationResult,
+    ToolObservation,
+)
 from tool_profiles import TOOL_PROFILES
 
 
@@ -58,6 +66,36 @@ def grounded_report(observation_id="obs-001", line_start=1):
         "suggested_fixes": [],
         "confidence": "low",
     })
+
+
+def classify_observations_message(
+    observation_ids,
+    *,
+    call_id="call-classify",
+    next_path="config.py",
+):
+    return FakeMessage(tool_calls=[{
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": "update_hypotheses",
+            "arguments": json.dumps({"hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "现有 Observation 支持待继续验证的候选根因",
+                "status": "supported",
+                "confidence": 0.65,
+                "supporting_observation_ids": list(observation_ids),
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {"path": next_path},
+                    "purpose": "读取尚未调查的文件进行交叉验证",
+                    "supports_if": "新文件支持当前候选根因",
+                    "rejects_if": "新文件否定当前候选根因",
+                },
+            }]}),
+        },
+    }])
 
 
 class FakeMessage:
@@ -122,6 +160,7 @@ def initial_state(max_steps=8):
         "hitl_tool_threshold": 10,
         "cancelled": False,
         "hypothesis_update_required": False,
+        "final_classification_used": False,
         "runtime_tools_enabled": False,
         "runtime_execution_preapproved": False,
         "runtime_execution_decision": None,
@@ -142,6 +181,21 @@ def initial_state(max_steps=8):
     }
 
 
+def state_with_existing_hypothesis(max_steps=8):
+    """供与初始建模无关的控制流测试直接进入外部调查阶段。"""
+    state = initial_state(max_steps=max_steps)
+    state["hypotheses"] = [{
+        "hypothesis_id": "H0",
+        "statement": "测试夹具已完成初始建模",
+        "status": "confirmed",
+        "confidence": 0.1,
+        "supporting_observation_ids": [],
+        "contradicting_observation_ids": [],
+        "next_action": None,
+    }]
+    return state
+
+
 def test_config():
     return AppConfig(
         api_key="test",
@@ -153,8 +207,69 @@ def test_config():
 
 
 class RoutingTests(unittest.TestCase):
+    def test_read_range_fully_covered_by_prior_observation_is_duplicate(self):
+        observations = [
+            ToolObservation(
+                observation_id=f"obs-00{index}",
+                tool_call_id=f"call-{index}",
+                step=index,
+                tool_name="read_file",
+                arguments={
+                    "path": "demo_app/run_case.py",
+                    "start_line": start,
+                    "end_line": end,
+                },
+                ok=True,
+                sources=[ObservedSource(
+                    source_type="code",
+                    file="demo_app/run_case.py",
+                    line_start=start,
+                    line_end=end,
+                )],
+                result_sha256=f"digest-{index}",
+                result_excerpt="excerpt",
+                duration_ms=1,
+            )
+            for index, (start, end) in enumerate(((1, 30), (31, 120)), 1)
+        ]
+
+        covered = _covered_read_observation(
+            "read_file",
+            '{"path":"demo_app/run_case.py","start_line":40,"end_line":60}',
+            observations,
+        )
+
+        self.assertIs(covered, observations[1])
+
+    def test_partially_overlapping_read_with_new_lines_is_allowed(self):
+        observed = ToolObservation(
+            observation_id="obs-001",
+            tool_call_id="call-1",
+            step=1,
+            tool_name="read_file",
+            arguments={"path": "demo_app/run_case.py", "start_line": 1, "end_line": 50},
+            ok=True,
+            sources=[ObservedSource(
+                source_type="code",
+                file="demo_app/run_case.py",
+                line_start=1,
+                line_end=50,
+            )],
+            result_sha256="digest",
+            result_excerpt="excerpt",
+            duration_ms=1,
+        )
+
+        covered = _covered_read_observation(
+            "read_file",
+            '{"path":"demo_app/run_case.py","start_line":40,"end_line":60}',
+            [observed],
+        )
+
+        self.assertIsNone(covered)
+
     def test_report_contract_has_schema_and_only_real_observations(self):
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["observations"] = [{
             "observation_id": "obs-001",
             "tool_call_id": "call-1",
@@ -230,6 +345,29 @@ class RoutingTests(unittest.TestCase):
 
         self.assertEqual(report.confidence, "low")
 
+    def test_report_parser_repairs_unescaped_code_quotes_locally(self):
+        payload = json.loads(VALID_REPORT)
+        payload["root_cause"] = 'Service 使用 payload["user_id"] 读取必填字段'
+        malformed = json.dumps(payload, ensure_ascii=False).replace(
+            'payload[\\"user_id\\"]',
+            'payload["user_id"]',
+        )
+
+        report = parse_incident_report(malformed)
+
+        self.assertIn('payload["user_id"]', report.root_cause)
+
+    def test_report_parser_repairs_missing_member_comma_locally(self):
+        malformed = VALID_REPORT.replace(
+            '", "root_cause"',
+            '" "root_cause"',
+            1,
+        )
+
+        report = parse_incident_report(malformed)
+
+        self.assertEqual(report.confidence, "low")
+
 
 class GraphFlowTests(unittest.TestCase):
     @patch("graph.verify_patch_in_sandbox")
@@ -247,9 +385,10 @@ class GraphFlowTests(unittest.TestCase):
                 "contradicting_observation_ids": [],
                 "next_action": {
                     "tool_name": "read_file",
-                    "purpose": "检查调用方",
-                    "supports_if": "调用方也没有校验",
-                    "rejects_if": "调用方已经校验",
+                    "arguments": {"path": "demo_app/app/service.py"},
+                    "purpose": "检查下游失败站点",
+                    "supports_if": "Service 直接读取必填字段",
+                    "rejects_if": "Service 已处理缺失字段",
                 },
             }],
         })
@@ -312,7 +451,7 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(content=report),
             FakeMessage(content=proposal),
         ])
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["patch_requested"] = True
         state["patch_verification_requested"] = True
         state["patch_verification_decision"] = None
@@ -363,9 +502,12 @@ class GraphFlowTests(unittest.TestCase):
                 "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"main.py"}'},
             }]),
+            classify_observations_message(["obs-001"]),
             FakeMessage(content=grounded_report()),
         ])
-        result = build_agent_graph(client, test_config()).invoke(initial_state())
+        result = build_agent_graph(client, test_config()).invoke(
+            state_with_existing_hypothesis()
+        )
 
         self.assertEqual(result["stop_reason"], "completed")
         self.assertEqual(len(result["observations"]), 1)
@@ -392,10 +534,13 @@ class GraphFlowTests(unittest.TestCase):
                 "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"main.py"}'},
             }]),
+            classify_observations_message(["obs-001"]),
             FakeMessage(content=grounded_report("obs-999")),
             FakeMessage(content=grounded_report("obs-001")),
         ])
-        result = build_agent_graph(client, test_config()).invoke(initial_state())
+        result = build_agent_graph(client, test_config()).invoke(
+            state_with_existing_hypothesis()
+        )
 
         self.assertEqual(result["stop_reason"], "completed")
         self.assertTrue(any(
@@ -420,7 +565,7 @@ class GraphFlowTests(unittest.TestCase):
             test_config(),
             allowed_tools=TOOL_PROFILES["code_only"],
         )
-        result = app.invoke(initial_state())
+        result = app.invoke(state_with_existing_hypothesis())
 
         schema_names = {
             schema["function"]["name"]
@@ -428,7 +573,7 @@ class GraphFlowTests(unittest.TestCase):
         }
         self.assertEqual(
             schema_names,
-            set(TOOL_PROFILES["code_only"]) | {"update_hypotheses"},
+            set(TOOL_PROFILES["code_only"]),
         )
         self.assertTrue(any(
             "tool_not_allowed" in message.get("content", "")
@@ -443,16 +588,92 @@ class GraphFlowTests(unittest.TestCase):
                 "type": "function",
                 "function": {"name": "list_files", "arguments": '{"path":".","max_depth":1}'},
             }]),
+            classify_observations_message(["obs-001"]),
             FakeMessage(content=VALID_REPORT),
         ])
         app = build_agent_graph(client, test_config())
-        result = app.invoke(initial_state())
+        result = app.invoke(state_with_existing_hypothesis())
 
         self.assertEqual(result["stop_reason"], "completed")
-        self.assertEqual(result["step_count"], 2)
-        self.assertEqual(result["tool_call_count"], 1)
+        self.assertEqual(result["step_count"], 3)
+        self.assertEqual(result["tool_call_count"], 2)
         self.assertEqual(result["report"]["confidence"], "low")
         self.assertTrue(any(message.get("role") == "tool" for message in result["messages"]))
+
+    def test_initial_hypothesis_gate_only_exposes_update_and_blocks_external_tool(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-external", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"main.py"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=2)
+        )
+
+        self.assertEqual(
+            [item["function"]["name"] for item in client.fake_completions.requests[0]["tools"]],
+            ["update_hypotheses"],
+        )
+        self.assertFalse(result["observations"][0]["ok"])
+        self.assertIn("尚未建立诊断假设", result["observations"][0]["error"])
+
+    def test_initial_runtime_call_is_blocked_before_review(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-runtime-before-hypothesis", "type": "function",
+                "function": {
+                    "name": "run_demo_case",
+                    "arguments": '{"case_id":"missing_user_id"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+            FakeMessage(content=VALID_REPORT),
+        ])
+        state = initial_state(max_steps=2)
+        state["human_review_enabled"] = True
+        state["runtime_tools_enabled"] = True
+
+        result = build_agent_graph(
+            client,
+            test_config(),
+            allowed_tools=TOOL_PROFILES["full_runtime"],
+            tool_profile="full_runtime",
+        ).invoke(state)
+
+        self.assertEqual(result["runtime_approval_count"], 0)
+        self.assertEqual(result["runtime_call_count"], 0)
+        self.assertIn("尚未建立诊断假设", result["observations"][0]["error"])
+
+    def test_direct_report_after_new_observation_requires_classification(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"main.py"}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+            classify_observations_message(["obs-001"]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            state_with_existing_hypothesis()
+        )
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertTrue(any(
+            "最新成功 Observation 尚未归类" in error
+            for error in result["validation_errors"]
+        ))
 
     def test_invalid_report_is_retried(self):
         client = FakeClient([
@@ -460,7 +681,7 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(content=VALID_REPORT),
         ])
         app = build_agent_graph(client, test_config())
-        result = app.invoke(initial_state())
+        result = app.invoke(state_with_existing_hypothesis())
 
         self.assertEqual(result["stop_reason"], "completed")
         self.assertEqual(result["step_count"], 2)
@@ -482,6 +703,7 @@ class GraphFlowTests(unittest.TestCase):
                 "contradicting_observation_ids": [],
                 "next_action": {
                     "tool_name": "read_file",
+                    "arguments": {"path": "config.py"},
                     "purpose": "读取配置文件交叉验证",
                     "supports_if": "配置不一致",
                     "rejects_if": "配置一致",
@@ -505,6 +727,11 @@ class GraphFlowTests(unittest.TestCase):
                 "id": "call-4", "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"config.py"}'},
             }]),
+            classify_observations_message(
+                ["obs-001", "obs-003"],
+                call_id="call-final-classify",
+                next_path="demo_app/app/api.py",
+            ),
             FakeMessage(content=VALID_REPORT),
         ])
 
@@ -518,6 +745,7 @@ class GraphFlowTests(unittest.TestCase):
             "contradicting_observation_ids": [],
             "next_action": {
                 "tool_name": "read_file",
+                "arguments": {"path": "main.py"},
                 "purpose": "读取入口",
                 "supports_if": "入口存在",
                 "rejects_if": "入口不存在",
@@ -529,6 +757,289 @@ class GraphFlowTests(unittest.TestCase):
         self.assertIn("上一轮的新证据尚未写入假设", result["observations"][1]["error"])
         self.assertFalse(any("search_code" in item for item in result["tool_call_signatures"]))
         self.assertTrue(any("config.py" in item for item in result["tool_call_signatures"]))
+
+    def test_initial_action_catalog_uses_current_profile_parameter_names(self):
+        catalog = _next_action_catalog(TOOL_PROFILES["full"])
+
+        self.assertIn("read_file(path, start_line?, end_line?)", catalog)
+        self.assertIn("search_code(query", catalog)
+        self.assertNotIn("list_checks", catalog)
+        self.assertNotIn("file_path", catalog)
+
+    def test_next_action_selection_treats_search_hit_as_not_yet_read(self):
+        prior = ToolObservation(
+            observation_id="obs-001",
+            tool_call_id="call-search",
+            step=1,
+            tool_name="search_code",
+            arguments={"query": "user_id"},
+            ok=True,
+            sources=[ObservedSource(
+                source_type="code",
+                file="demo_app/run_case.py",
+                line_start=46,
+                line_end=46,
+            )],
+            result_sha256="digest",
+            result_excerpt="result",
+            duration_ms=1,
+        )
+        root_cause = DiagnosticHypothesis(
+            hypothesis_id="H1",
+            statement="API 入口可能缺少校验",
+            status="unverified",
+            confidence=0.3,
+            next_action={
+                "tool_name": "search_code",
+                "arguments": {"query": "def post_users"},
+                "purpose": "定位新的入口来源",
+                "supports_if": "入口直接透传",
+                "rejects_if": "入口已校验",
+            },
+        )
+        trigger = DiagnosticHypothesis(
+            hypothesis_id="H2",
+            statement="复现分支缺少字段",
+            status="supported",
+            confidence=0.7,
+            supporting_observation_ids=["obs-001"],
+            next_action={
+                "tool_name": "read_file",
+                "arguments": {
+                    "path": "demo_app/run_case.py",
+                    "start_line": 40,
+                    "end_line": 60,
+                },
+                "purpose": "细看已知触发文件",
+                "supports_if": "payload 缺字段",
+                "rejects_if": "payload 完整",
+            },
+        )
+
+        selected = _select_next_action([trigger, root_cause], [prior])
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected[0].hypothesis_id, "H2")
+
+    def test_hypothesis_update_without_new_evidence_must_advance_next_action(self):
+        initial_hypotheses = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "API 入口可能缺少字段校验",
+                "status": "unverified",
+                "confidence": 0.5,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {"path": "demo_app/app/api.py"},
+                    "purpose": "读取 API 入口确认是否校验字段",
+                    "supports_if": "入口直接透传 payload",
+                    "rejects_if": "入口已经返回 400",
+                },
+            }],
+        })
+        updated_hypotheses = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "API 入口缺少字段校验",
+                "status": "supported",
+                "confidence": 0.75,
+                "supporting_observation_ids": ["obs-001"],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {"path": "demo_app/app/service.py"},
+                    "purpose": "读取 Service 交叉验证直接取键",
+                    "supports_if": "Service 直接下标访问",
+                    "rejects_if": "Service 有防御校验",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": initial_hypotheses,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"demo_app/app/api.py"}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": updated_hypotheses,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+        second_request = client.fake_completions.requests[1]
+        second_schema_names = {
+            schema["function"]["name"] for schema in second_request["tools"]
+        }
+
+        self.assertNotIn("update_hypotheses", second_schema_names)
+        self.assertTrue(any(
+            "推进门" in message.get("content", "")
+            and "demo_app/app/api.py" in message.get("content", "")
+            and "read_file" in message.get("content", "")
+            and "不得扩大读取范围" in message.get("content", "")
+            for message in second_request["messages"]
+        ))
+        self.assertTrue(any(
+            "demo_app/app/api.py" in signature
+            for signature in result["tool_call_signatures"]
+        ))
+
+    def test_structured_next_action_rejects_expanded_read_range(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-wide", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({
+                        "path": "demo_app/run_case.py",
+                        "start_line": 1,
+                        "end_line": 120,
+                    }),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+        state = initial_state()
+        state["hypotheses"] = [{
+            "hypothesis_id": "H1",
+            "statement": "调用方传入了缺字段 payload",
+            "status": "unverified",
+            "confidence": 0.5,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "arguments": {
+                    "path": "demo_app/run_case.py",
+                    "start_line": 40,
+                    "end_line": 60,
+                },
+                "purpose": "检查 missing_user_id 分支",
+                "supports_if": "payload 缺少 user_id",
+                "rejects_if": "payload 包含 user_id",
+            },
+        }]
+
+        result = build_agent_graph(client, test_config()).invoke(state)
+
+        self.assertEqual(result["observations"][0]["error"].split("；", 1)[0],
+                         "工具调用与已校验的结构化 next_action 不一致")
+        self.assertEqual(
+            json.loads(result["messages"][3]["content"])["meta"]["reason"],
+            "next_action_mismatch",
+        )
+        self.assertFalse(result["tool_call_signatures"])
+
+    def test_undeclared_repeated_hypothesis_update_is_rejected(self):
+        initial_hypotheses = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "API 入口可能缺少字段校验",
+                "status": "unverified",
+                "confidence": 0.5,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {"path": "demo_app/app/api.py"},
+                    "purpose": "读取 API 入口确认是否校验字段",
+                    "supports_if": "入口直接透传 payload",
+                    "rejects_if": "入口已经返回 400",
+                },
+            }],
+        })
+        forbidden_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "没有新证据却提高置信度",
+                "status": "supported",
+                "confidence": 0.9,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {"path": "demo_app/app/api.py"},
+                    "purpose": "仍应读取 API 入口",
+                    "supports_if": "入口直接透传 payload",
+                    "rejects_if": "入口已经返回 400",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": initial_hypotheses,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-illegal", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": forbidden_update,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"demo_app/app/api.py"}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": json.dumps({
+                        "hypotheses": [{
+                            "hypothesis_id": "H1",
+                            "statement": "API 入口缺少字段校验",
+                            "status": "supported",
+                            "confidence": 0.75,
+                            "supporting_observation_ids": ["obs-001"],
+                            "contradicting_observation_ids": [],
+                            "next_action": {
+                                "tool_name": "read_file",
+                                "arguments": {"path": "demo_app/app/service.py"},
+                                "purpose": "读取 Service 交叉验证",
+                                "supports_if": "Service 直接取键",
+                                "rejects_if": "Service 已校验",
+                            },
+                        }],
+                    }),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertTrue(any(
+            "hypothesis_update_not_allowed" in message.get("content", "")
+            for message in result["messages"]
+            if message.get("role") == "tool"
+        ))
+        self.assertTrue(any(
+            "demo_app/app/api.py" in signature
+            for signature in result["tool_call_signatures"]
+        ))
 
     def test_max_steps_executes_tool_then_synthesizes_report(self):
         client = FakeClient([
@@ -547,11 +1058,333 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(result["tool_call_count"], 1)
         self.assertNotIn("tools", client.fake_completions.requests[-1])
 
+    def test_last_successful_observation_gets_one_classification_before_summary(self):
+        initial_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "入口文件包含待确认行为",
+            "status": "unverified",
+            "confidence": 0.4,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "arguments": {"path": "main.py", "start_line": 1, "end_line": 3},
+                "purpose": "读取入口前三行",
+                "supports_if": "入口包含目标行为",
+                "rejects_if": "入口不包含目标行为",
+            },
+        }]})
+        classified_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "入口文件包含目标行为",
+            "status": "confirmed",
+            "confidence": 0.85,
+            "supporting_observation_ids": ["obs-001"],
+            "contradicting_observation_ids": [],
+            "next_action": None,
+        }]})
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": initial_hypotheses},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"main.py","start_line":1,"end_line":3}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": classified_hypotheses},
+            }]),
+            FakeMessage(content=grounded_report()),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state(max_steps=2))
+
+        self.assertTrue(result["final_classification_used"])
+        self.assertEqual(result["step_count"], 2)
+        self.assertEqual(result["hypotheses"][0]["status"], "confirmed")
+        self.assertEqual(result["stop_reason"], "completed")
+        classification_request = client.fake_completions.requests[2]
+        self.assertEqual(
+            [item["function"]["name"] for item in classification_request["tools"]],
+            ["update_hypotheses"],
+        )
+        self.assertEqual(classification_request["tool_choice"], "auto")
+        self.assertNotIn("tools", client.fake_completions.requests[3])
+
+    def test_final_classification_accepts_supported_state_without_next_action(self):
+        initial_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "API 入口行为待确认",
+            "status": "unverified",
+            "confidence": 0.4,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "arguments": {"path": "main.py", "start_line": 1, "end_line": 3},
+                "purpose": "读取入口",
+                "supports_if": "入口直接调用下游",
+                "rejects_if": "入口已校验",
+            },
+        }]})
+        terminal_update = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "API 入口直接调用下游",
+            "status": "supported",
+            "confidence": 0.75,
+            "supporting_observation_ids": ["obs-001"],
+            "contradicting_observation_ids": [],
+            "next_action": None,
+        }]})
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": initial_hypotheses},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"main.py","start_line":1,"end_line":3}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-final", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": terminal_update},
+            }]),
+            FakeMessage(content=grounded_report()),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=2)
+        )
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertTrue(result["final_classification_used"])
+        self.assertEqual(result["hypotheses"][0]["status"], "supported")
+        self.assertIsNone(result["hypotheses"][0]["next_action"])
+
+    def test_initial_inline_hypothesis_object_avoids_retry_turn(self):
+        initial = {
+            "type": "hypotheses",
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": 'API 入口可能读取 mapping["required_key"]',
+                "status": "unverified",
+                "confidence": 0.4,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "arguments": {
+                        "path": "main.py", "start_line": 1, "end_line": 3,
+                    },
+                    "purpose": "读取入口",
+                    "supports_if": "入口直接调用下游",
+                    "rejects_if": "入口已校验",
+                },
+            }],
+        }
+        terminal = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "API 入口直接调用下游",
+            "status": "supported",
+            "confidence": 0.75,
+            "supporting_observation_ids": ["obs-001"],
+            "contradicting_observation_ids": [],
+            "next_action": None,
+        }]})
+        malformed_inline = json.dumps(initial, ensure_ascii=False).replace(
+            'mapping[\\"required_key\\"]',
+            'mapping["required_key"]',
+        )
+        client = FakeClient([
+            FakeMessage(content=malformed_inline),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path":"main.py","start_line":1,"end_line":3}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-final", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": terminal},
+            }]),
+            FakeMessage(content=grounded_report()),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=2)
+        )
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertEqual(result["step_count"], 2)
+        self.assertEqual(result["model_call_count"], 4)
+        self.assertEqual(result["hypotheses"][0]["status"], "supported")
+        self.assertFalse(any(
+            "调查尚未建立初始诊断假设" in item
+            for item in result["validation_errors"]
+        ))
+
+    def test_missing_user_id_fake_flow_reaches_grounded_root_cause(self):
+        def hypothesis_update(status, confidence, supporting, action):
+            return json.dumps({"hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": (
+                    "API 入口缺少 user_id 校验，非法 payload 进入 Service，"
+                    "随后读取 payload[\"user_id\"] 触发 KeyError"
+                ),
+                "status": status,
+                "confidence": confidence,
+                "supporting_observation_ids": supporting,
+                "contradicting_observation_ids": [],
+                "next_action": action,
+            }]})
+
+        search_action = {
+            "tool_name": "search_code",
+            "arguments": {"query": "missing_user_id"},
+            "purpose": "定位复现场景入口",
+            "supports_if": "存在对应 case 分支",
+            "rejects_if": "不存在对应分支",
+        }
+        run_case_action = {
+            "tool_name": "read_file",
+            "arguments": {
+                "path": "demo_app/run_case.py", "start_line": 40, "end_line": 60,
+            },
+            "purpose": "读取复现分支传入的 payload",
+            "supports_if": "payload 缺少 user_id",
+            "rejects_if": "payload 包含 user_id",
+        }
+        api_action = {
+            "tool_name": "read_file",
+            "arguments": {
+                "path": "demo_app/app/api.py", "start_line": 1, "end_line": 15,
+            },
+            "purpose": "检查 API 边界校验",
+            "supports_if": "API 直接透传 payload",
+            "rejects_if": "API 拒绝缺少字段的请求",
+        }
+        service_action = {
+            "tool_name": "read_file",
+            "arguments": {
+                "path": "demo_app/app/service.py", "start_line": 1, "end_line": 15,
+            },
+            "purpose": "确认 Service 的实际抛错点",
+            "supports_if": "Service 使用 payload 下标访问 user_id",
+            "rejects_if": "Service 已安全处理缺失字段",
+        }
+        report = json.dumps({
+            "summary": "缺少入口校验的 payload 在 Service 中触发 KeyError",
+            "root_cause": (
+                "API 入口没有校验必填 user_id，missing_user_id 分支把非法 payload 传入 "
+                "Service，Service 随后以 payload[\"user_id\"] 取值并触发 KeyError。"
+            ),
+            "claims": [{
+                "claim_id": "C1",
+                "statement": "调用方构造了缺少 user_id 的 payload，API 未校验即传入 Service",
+                "evidence_ids": ["E1", "E2", "E3"],
+            }],
+            "evidence": [{
+                "evidence_id": "E1", "observation_id": "obs-002",
+                "source_type": "code", "file": "demo_app/run_case.py",
+                "line_start": 46, "line_end": 47, "commit_hash": None,
+                "runtime_id": None, "description": "复现分支传入缺少 user_id 的 payload",
+            }, {
+                "evidence_id": "E2", "observation_id": "obs-003",
+                "source_type": "code", "file": "demo_app/app/api.py",
+                "line_start": 8, "line_end": 10, "commit_hash": None,
+                "runtime_id": None, "description": "API 未校验 payload 即调用 Service",
+            }, {
+                "evidence_id": "E3", "observation_id": "obs-004",
+                "source_type": "code", "file": "demo_app/app/service.py",
+                "line_start": 8, "line_end": 10, "commit_hash": None,
+                "runtime_id": None, "description": "Service 直接下标访问 user_id",
+            }],
+            "suggested_fixes": ["在 API 边界校验 user_id 并按接口契约返回客户端错误"],
+            "confidence": "high",
+        })
+        initial_inline = json.loads(hypothesis_update(
+            "unverified", 0.35, [], search_action,
+        ))
+        initial_inline["type"] = "hypotheses"
+        malformed_initial_inline = json.dumps(
+            initial_inline, ensure_ascii=False
+        ).replace(
+            'payload[\\"user_id\\"]',
+            'payload["user_id"]',
+        )
+        client = FakeClient([
+            FakeMessage(content=malformed_initial_inline),
+            FakeMessage(tool_calls=[{
+                "id": "search", "type": "function",
+                "function": {"name": "search_code", "arguments": '{"query":"missing_user_id"}'},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "h2", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": hypothesis_update(
+                    "unverified", 0.45, ["obs-001"], run_case_action,
+                )},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "run-case", "type": "function",
+                "function": {"name": "read_file", "arguments": json.dumps(run_case_action["arguments"])},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "h3", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": hypothesis_update(
+                    "supported", 0.65, ["obs-001", "obs-002"], api_action,
+                )},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "api", "type": "function",
+                "function": {"name": "read_file", "arguments": json.dumps(api_action["arguments"])},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "h4", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": hypothesis_update(
+                    "supported", 0.78, ["obs-001", "obs-002", "obs-003"], service_action,
+                )},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "service", "type": "function",
+                "function": {"name": "read_file", "arguments": json.dumps(service_action["arguments"])},
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "h5", "type": "function",
+                "function": {"name": "update_hypotheses", "arguments": hypothesis_update(
+                    "confirmed", 0.92, ["obs-002", "obs-003", "obs-004"], None,
+                )},
+            }]),
+            FakeMessage(content=report),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state(max_steps=8))
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertEqual(result["report"]["confidence"], "high")
+        self.assertIn("payload[\"user_id\"]", result["report"]["root_cause"])
+        self.assertEqual(result["hypotheses"][0]["status"], "confirmed")
+        self.assertTrue(result["final_classification_used"])
+        self.assertFalse(result["repair_attempted"])
+        self.assertEqual(result["repeated_tool_call_count"], 0)
+        self.assertTrue(any('"start_line":40' in item for item in result["tool_call_signatures"]))
+
     def test_first_duplicate_tool_call_allows_one_correction_turn(self):
         repeated_call = {
             "id": "call-2",
             "type": "function",
-            "function": {"name": "list_files", "arguments": '{"path":".","max_depth":1}'},
+            "function": {
+                "name": "read_file",
+                "arguments": '{"path":"missing-file.py"}',
+            },
         }
         client = FakeClient([
             FakeMessage(tool_calls=[{**repeated_call, "id": "call-1"}]),
@@ -559,7 +1392,7 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(content=VALID_REPORT),
         ])
         app = build_agent_graph(client, test_config())
-        result = app.invoke(initial_state())
+        result = app.invoke(state_with_existing_hypothesis())
 
         self.assertEqual(result["stop_reason"], "completed")
         self.assertEqual(result["repeated_tool_call_count"], 1)
@@ -577,8 +1410,8 @@ class GraphFlowTests(unittest.TestCase):
                 "id": call_id,
                 "type": "function",
                 "function": {
-                    "name": "list_files",
-                    "arguments": '{"path":".","max_depth":1}',
+                    "name": "read_file",
+                    "arguments": '{"path":"missing-file.py"}',
                 },
             }
 
@@ -588,7 +1421,9 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(tool_calls=[repeated_call("call-3")]),
             FakeMessage(content=VALID_REPORT),
         ])
-        result = build_agent_graph(client, test_config()).invoke(initial_state())
+        result = build_agent_graph(client, test_config()).invoke(
+            state_with_existing_hypothesis()
+        )
 
         self.assertEqual(result["stop_reason"], "completed")
         self.assertEqual(result["repeated_tool_call_count"], 2)
@@ -617,6 +1452,24 @@ class GraphFlowTests(unittest.TestCase):
         repair_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
         self.assertIn("suggested_fixes 必须是字符串数组", repair_prompt)
         self.assertIn("Claim.evidence_ids", repair_prompt)
+
+    def test_local_json_repair_completes_without_extra_model_call(self):
+        payload = json.loads(VALID_REPORT)
+        payload["root_cause"] = 'Service 使用 payload["user_id"] 触发 KeyError'
+        malformed = json.dumps(payload, ensure_ascii=False).replace(
+            'payload[\\"user_id\\"]',
+            'payload["user_id"]',
+        )
+        client = FakeClient([FakeMessage(content=malformed)])
+        state = state_with_existing_hypothesis(max_steps=1)
+        state["max_model_calls"] = 1
+
+        result = build_agent_graph(client, test_config()).invoke(state)
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertTrue(result["repair_attempted"])
+        self.assertEqual(result["model_call_count"], 1)
+        self.assertEqual(len(client.fake_completions.requests), 1)
 
     def test_fallback_preserves_grounded_supported_hypothesis(self):
         client = FakeClient([
@@ -655,6 +1508,7 @@ class GraphFlowTests(unittest.TestCase):
             "contradicting_observation_ids": [],
             "next_action": {
                 "tool_name": "read_file",
+                "arguments": {"path": "config.py"},
                 "purpose": "读取另一配置文件交叉验证",
                 "supports_if": "配置不一致",
                 "rejects_if": "配置一致",
@@ -688,8 +1542,7 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(tool_calls=[{
                 "id": "call-1", "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"main.py"}'},
-            }]),
-            FakeMessage(tool_calls=[{
+            }, {
                 "id": "call-2", "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"config.py"}'},
             }]),
@@ -700,12 +1553,14 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(content=VALID_REPORT),
         ])
 
-        result = build_agent_graph(client, test_config()).invoke(initial_state())
+        result = build_agent_graph(client, test_config()).invoke(
+            state_with_existing_hypothesis()
+        )
 
         self.assertTrue(result["early_stopped"])
         self.assertTrue(result["synthesis_attempted"])
         self.assertEqual(result["hypotheses"][0]["status"], "confirmed")
-        self.assertEqual(result["step_count"], 3)
+        self.assertEqual(result["step_count"], 2)
         synthesis_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
         self.assertIn("严格 JSON Schema", synthesis_prompt)
 
@@ -725,8 +1580,7 @@ class GraphFlowTests(unittest.TestCase):
             FakeMessage(tool_calls=[{
                 "id": "call-1", "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"main.py"}'},
-            }]),
-            FakeMessage(tool_calls=[{
+            }, {
                 "id": "call-2", "type": "function",
                 "function": {"name": "read_file", "arguments": '{"path":"config.py"}'},
             }]),
@@ -738,7 +1592,7 @@ class GraphFlowTests(unittest.TestCase):
         ])
 
         result = build_agent_graph(client, test_config()).invoke(
-            initial_state(max_steps=3)
+            state_with_existing_hypothesis(max_steps=2)
         )
 
         self.assertTrue(result["evidence_sufficient"])
@@ -758,7 +1612,7 @@ class GraphFlowTests(unittest.TestCase):
         ])
         saver = InMemorySaver()
         app = build_agent_graph(client, test_config(), checkpointer=saver)
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["human_review_enabled"] = True
         state["hitl_tool_threshold"] = 1
         runtime = {"configurable": {"thread_id": "hitl-test"}}
@@ -783,6 +1637,9 @@ class GraphFlowTests(unittest.TestCase):
                     "arguments": '{"case_id":"missing_user_id"}',
                 },
             }]),
+            classify_observations_message(
+                ["obs-001"], next_path="demo_app/app/api.py"
+            ),
             FakeMessage(content=VALID_REPORT),
         ])
         saver = InMemorySaver()
@@ -793,7 +1650,7 @@ class GraphFlowTests(unittest.TestCase):
             allowed_tools=TOOL_PROFILES["full_runtime"],
             tool_profile="full_runtime",
         )
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["human_review_enabled"] = True
         state["runtime_tools_enabled"] = True
         runtime = {"configurable": {"thread_id": "runtime-approval-test"}}
@@ -834,7 +1691,7 @@ class GraphFlowTests(unittest.TestCase):
             allowed_tools=TOOL_PROFILES["full_runtime"],
             tool_profile="full_runtime",
         )
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["human_review_enabled"] = True
         state["runtime_tools_enabled"] = True
         runtime = {"configurable": {"thread_id": "runtime-denial-test"}}
@@ -868,6 +1725,9 @@ class GraphFlowTests(unittest.TestCase):
                     "arguments": '{"check_id":"demo_missing_user_id"}',
                 },
             }]),
+            classify_observations_message(
+                ["obs-001"], next_path="demo_app/app/api.py"
+            ),
             FakeMessage(content=VALID_REPORT),
         ])
         saver = InMemorySaver()
@@ -878,7 +1738,7 @@ class GraphFlowTests(unittest.TestCase):
             allowed_tools=TOOL_PROFILES["full_runtime"],
             tool_profile="full_runtime",
         )
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["human_review_enabled"] = True
         state["runtime_tools_enabled"] = True
         runtime = {"configurable": {"thread_id": "harness-approval-test"}}
@@ -919,8 +1779,9 @@ class GraphFlowTests(unittest.TestCase):
             ]),
             FakeMessage(content=VALID_REPORT),
         ])
-        state = initial_state()
+        state = state_with_existing_hypothesis()
         state["max_tool_calls"] = 1
+        state["final_classification_used"] = True
 
         result = build_agent_graph(client, test_config()).invoke(state)
 
@@ -941,6 +1802,7 @@ class GraphFlowTests(unittest.TestCase):
                 "contradicting_observation_ids": [],
                 "next_action": {
                     "tool_name": "list_files",
+                    "arguments": {"path": ".", "max_depth": 1},
                     "purpose": "定位入口文件",
                     "supports_if": "存在入口文件",
                     "rejects_if": "不存在入口文件",
@@ -948,14 +1810,14 @@ class GraphFlowTests(unittest.TestCase):
             }],
         })
         client = FakeClient([
-            FakeMessage(tool_calls=[
-                {
-                    "id": "call-h", "type": "function",
-                    "function": {
-                        "name": "update_hypotheses",
-                        "arguments": hypothesis_arguments,
-                    },
+            FakeMessage(tool_calls=[{
+                "id": "call-h", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": hypothesis_arguments,
                 },
+            }]),
+            FakeMessage(tool_calls=[
                 {
                     "id": "call-1", "type": "function",
                     "function": {
@@ -971,6 +1833,9 @@ class GraphFlowTests(unittest.TestCase):
                     },
                 },
             ]),
+            classify_observations_message(
+                ["obs-001"], next_path="demo_app/app/api.py"
+            ),
             FakeMessage(content=VALID_REPORT),
         ])
         state = initial_state()
@@ -979,8 +1844,8 @@ class GraphFlowTests(unittest.TestCase):
         result = build_agent_graph(client, test_config()).invoke(state)
 
         self.assertFalse(result["force_synthesis"])
-        self.assertEqual(result["step_count"], 2)
-        self.assertEqual(result["tool_call_count"], 3)
+        self.assertEqual(result["step_count"], 4)
+        self.assertEqual(result["tool_call_count"], 4)
         self.assertEqual(len(result["observations"]), 2)
         self.assertTrue(result["observations"][0]["ok"])
         self.assertIn("单轮最多执行 1 个工具", result["observations"][1]["error"])

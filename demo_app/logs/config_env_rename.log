@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 78, in run_case
+    validate_timeout_configuration(environment)
+  File "demo_app/app/settings.py", line 12, in validate_timeout_configuration
+    raise RuntimeError(
+RuntimeError: timeout configuration mismatch: loaded 5000, expected 1200

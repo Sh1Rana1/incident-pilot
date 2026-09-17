@@ -1,0 +1,9 @@
+{
+  "case_id": "transaction_rollback",
+  "split": "hidden",
+  "question": "批量导入跳过一条非法记录后，下一批出现 sqlite3.OperationalError: cannot start a transaction within a transaction。请找出连接状态没有恢复的原因。",
+  "expected_exception": "sqlite3.OperationalError",
+  "root_cause_keywords": ["rollback", "事务", "ValueError"],
+  "evidence_files": ["demo_app/app/transactions.py"],
+  "relevant_docs": ["demo_app/docs/reliability.md"]
+}

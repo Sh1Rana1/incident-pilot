@@ -1,5 +1,6 @@
 {
   "case_id": "git_regression",
+  "split": "hidden",
   "question": "连接池回归是在引入 LangGraph、RAG 和 Git 调查工具的那个版本后首次出现的。请找出代码根因，并通过 Git 历史指出引入它的提交短哈希。",
   "expected_exception": "RuntimeError",
   "root_cause_keywords": ["release", "finally", "61932b9"],

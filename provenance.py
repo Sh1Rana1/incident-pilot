@@ -1,4 +1,4 @@
-"""V12.1.1 工具 Observation 与代码、文档、Git、Harness Runtime 来源验证。"""
+"""V14 工具 Observation 与代码、文档、Git、Harness Runtime 来源验证。"""
 
 import hashlib
 import json
@@ -7,6 +7,12 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from models import Evidence, IncidentReport, ObservedSource, ToolObservation
+
+
+MAX_RESULT_EXCERPT_CHARS = 1000
+MAX_SEARCH_CODE_EXCERPT_CHARS = 6000
+MAX_READ_FILE_EXCERPT_CHARS = 50000
+MAX_READ_FILE_EXCERPT_LINES = 30
 
 
 def _normalized_path(path: str) -> str:
@@ -113,6 +119,57 @@ def extract_observed_sources(tool_name: str, result_payload: dict[str, Any]) -> 
     return []
 
 
+def _result_excerpt(
+    tool_name: str,
+    payload: dict[str, Any],
+    arguments: dict[str, Any],
+) -> str:
+    """为模型记忆生成保留关键行、但不替代原始工具结果的紧凑摘录。"""
+    if tool_name == "search_code" and payload.get("ok"):
+        # 搜索结果通常由多条短命中组成。只保留通用的 1,000 字符会让
+        # 排在后面的 failure site / caller 命中从下一轮上下文中消失，
+        # 诱导模型再次搜索。这里保留完整的常规搜索结果，同时仍设硬上限。
+        return json.dumps(payload, ensure_ascii=False)[:MAX_SEARCH_CODE_EXCERPT_CHARS]
+    if tool_name != "read_file" or not payload.get("ok"):
+        return json.dumps(payload, ensure_ascii=False)[:MAX_RESULT_EXCERPT_CHARS]
+
+    data = payload.get("data") or {}
+    lines = data.get("lines") or []
+    targeted = arguments.get("start_line") is not None or arguments.get("end_line") is not None
+    selected = lines
+    omitted = 0
+    if not targeted and len(lines) > MAX_READ_FILE_EXCERPT_LINES:
+        half = MAX_READ_FILE_EXCERPT_LINES // 2
+        selected = lines[:half] + lines[-half:]
+        omitted = len(lines) - len(selected)
+    compact = {
+        "path": data.get("path", ""),
+        "requested_start_line": arguments.get("start_line"),
+        "requested_end_line": arguments.get("end_line"),
+        "lines": selected,
+    }
+    if omitted:
+        compact["omitted_middle_line_count"] = omitted
+    serialized = json.dumps(compact, ensure_ascii=False)
+    if len(serialized) > MAX_READ_FILE_EXCERPT_CHARS and len(selected) > 2:
+        half = MAX_READ_FILE_EXCERPT_LINES // 2
+        compact["lines"] = selected[:half] + selected[-half:]
+        compact["omitted_middle_line_count"] = max(0, len(lines) - 2 * half)
+        serialized = json.dumps(compact, ensure_ascii=False)
+    if len(serialized) > MAX_READ_FILE_EXCERPT_CHARS:
+        compact["lines"] = [
+            {
+                **item,
+                "content": str(item.get("content", ""))[:1000],
+            }
+            for item in compact.get("lines", [])
+            if isinstance(item, dict)
+        ]
+        compact["line_content_truncated"] = True
+        serialized = json.dumps(compact, ensure_ascii=False)
+    return serialized
+
+
 def build_observation(
     observation_id: str,
     tool_call_id: str,
@@ -144,7 +201,7 @@ def build_observation(
         sources=extract_observed_sources(tool_name, payload),
         error=payload.get("error"),
         result_sha256=hashlib.sha256(result_with_id.encode("utf-8")).hexdigest(),
-        result_excerpt=result_with_id[:1000],
+        result_excerpt=_result_excerpt(tool_name, payload, arguments),
         duration_ms=round(duration_ms, 2),
     )
     return observation, result_with_id

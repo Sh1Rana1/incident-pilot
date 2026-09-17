@@ -1,4 +1,4 @@
-"""V12.1.1 安全测试 Harness：模型只选择 check_id，命令由受信清单构造。"""
+"""安全测试 Harness：模型只选择 check_id，命令由受信清单构造。"""
 
 import hashlib
 import json
@@ -34,6 +34,14 @@ DEMO_CASES = {
     "schema_mismatch",
     "connection_leak",
     "documentation_required",
+    "async_missing_await",
+    "retry_non_idempotent",
+    "timezone_mismatch",
+    "cache_key_version",
+    "pagination_off_by_one",
+    "config_env_rename",
+    "transaction_rollback",
+    "dependency_contract_change",
 }
 _CHECK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
 _UNITTEST_TARGET_PATTERN = re.compile(

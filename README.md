@@ -1,6 +1,6 @@
-# IncidentPilot V13 · Patch Sandbox Verification
+# IncidentPilot V14（开发中）· Expanded Benchmark
 
-IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看代码、文档和 Git 信息，并可在人工批准后运行 Safe Test Harness，取得真实 Runtime Evidence。V13 在严格 Patch Proposal 之后增加独立审批与临时副本验证：系统先在副本中确认原故障可复现，再应用候选 diff，最后运行覆盖修改文件的契约检查和全局回归检查。正式工作区始终不被修改，验证过程也不会再调用模型。
+IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看代码、文档和 Git 信息，并可在人工批准后运行 Safe Test Harness，取得真实 Runtime Evidence。V13 的严格 Patch Proposal 与临时副本验证保持不变；V14 Phase 1 把可执行故障扩展到十二类，并把十五个评测案例划分为 development/hidden，目标是先建立更可信的实验基线，再测量后续 Judge 与产品化改动的真实收益。
 
 当前版本的重点是：
 
@@ -19,8 +19,11 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 根据 `covers_files` 自动加入覆盖修改文件的检查，并始终加入全局回归检查；没有覆盖检查的修改拒绝验证；
 - 在任何临时写入和子进程启动前使用独立 HITL 审批，拒绝后不创建临时目录；
 - 使用内部 `update_hypotheses` 控制工具维护候选根因、支持证据和反证；
-- 使用结构化 `next_action` 明确下一工具、目的、支持条件和否定条件；
+- 使用结构化 `next_action` 明确下一工具、精确参数、目的、支持条件和否定条件；保存时按对应工具参数模型校验，执行时禁止模型擅自扩大范围；
+- 调查开始时只向模型开放 `update_hypotheses`；初始假设成功保存前，执行层拒绝文件、RAG、Git 和 Runtime 调用，也不会为越门的 Runtime 请求弹出审批；
+- 保存假设时检查 `next_action` 的信息增益：已成功执行的相同调用、以及已被成功 Observation 完整覆盖的文件区间不能再次成为下一动作；
 - 新证据产生后强制先更新假设，未归类前禁止继续调用外部工具；
+- 假设完成更新且没有新证据时暂时移除假设工具，推动 Agent 执行能补充尚未直接读取的文件或新来源的最高信息增益 `next_action`；搜索命中不冒充完整文件读取，避免只反复调整置信度；
 - 在 confirmed 假设获得两项独立 Observation 后提前总结；
 - 使用 LangGraph 原生 interrupt 和 checkpoint 实现人工暂停与恢复；
 - 同时限制调查轮数、模型调用数和工具调用数；
@@ -46,9 +49,9 @@ IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。�
 - 统计上下文压缩、Observation 利用率和确认根因后的额外调用。
 - 将每次报告验证错误持久化到 Evaluation JSON，保留字段路径和具体原因。
 
-当前版本不会执行模型生成的任意命令，不会修改正式工作区或操作生产环境。它只能运行 `harness.json` 中由项目所有者预登记并通过安全校验的检查，以及为兼容旧版本保留的四个固定 Demo Case；Runtime 默认关闭。Patch Proposal 的 `validated` 只表示格式与范围合法；只有隔离验证结果为 `verified`，才表示当次临时副本中的基线、补丁应用和补丁后检查全部满足 V13 规则。这里的“隔离”是临时工作区隔离，不是容器或操作系统安全沙箱。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
+当前版本不会执行模型生成的任意命令，不会修改正式工作区或操作生产环境。它只能运行 `harness.json` 中由项目所有者预登记并通过安全校验的检查，以及为兼容旧版本保留的十二个固定 Demo Case；Runtime 默认关闭。Patch Proposal 的 `validated` 只表示格式与范围合法；只有隔离验证结果为 `verified`，才表示当次临时副本中的基线、补丁应用和补丁后检查全部满足 V13 规则。这里的“隔离”是临时工作区隔离，不是容器或操作系统安全沙箱。模型能看到工具返回的代码、文档片段和运行结果，因此使用第三方模型服务前，应确认这些内容允许发送给该服务商。
 
-版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前 V13 的真实实现。
+版本演进单独记录在 [CHANGELOG.md](CHANGELOG.md)。README 只描述当前工作区已经存在的能力；V14 尚未完成的 Judge 与产品化功能不会提前写成已实现。
 
 ## 1. 快速开始
 
@@ -366,7 +369,7 @@ IncidentPilot 可以：
 - 压缩发给模型的历史上下文，同时在 Checkpoint 保留完整调查轨迹；
 - 新 Observation 未写入假设时阻止继续扩散调查；
 - 在根因获得两项独立来源支持时提前停止扩散调查；
-- 识别完全相同的重复工具调用；
+- 识别完全相同的重复工具调用，以及同一文件已被成功读取区间完整覆盖的定向读取；
 - 在调查预算耗尽时根据已有证据强制总结；
 - 在费用阈值、受保护路径或冲突假设处暂停，由用户选择继续、总结或取消；
 - 使用 Checkpoint 从同一人工中断点恢复；
@@ -383,7 +386,7 @@ IncidentPilot 可以：
 - 自动选择覆盖修改文件的契约检查和全局回归检查，并输出逐项验证结果；
 - 拒绝未读取文件、越界行号、伪造 Observation 和虚假 Git 提交；
 - 接受纯 JSON、JSON 代码块和前后带少量说明的合法报告，并记录历次验证错误；
-- 批量评测七个故障诊断案例，其中一个强制要求 Runtime Evidence；
+- 批量评测十五个故障诊断案例，划分为 5 个开发项和 10 个隐藏项，其中一个强制要求 Runtime Evidence；
 - 比较不同工具组合并统计多次运行稳定性。
 
 ### 2.2 不能做什么
@@ -442,12 +445,12 @@ incident-pilot/
 │   └── troubleshooting.md      # 项目排障手册
 ├── demo_app/
 │   ├── app/                    # 故意包含多个 Bug 的模拟业务代码
-│   ├── docs/                   # RAG 专用的规范、Runbook 和事故文档
+│   ├── docs/                   # RAG 专用的规范、Runbook 和公开契约
 │   ├── fixtures/               # Agent 不可见的外部系统模拟器
 │   ├── logs/                   # 可用于提问的简化 traceback
-│   ├── checks/                 # 可由 Harness 运行的 Smoke 与业务契约检查
+│   ├── checks/                 # Harness 内部检查实现，Agent 文件工具不可见
 │   ├── evals/                  # Agent 不可见的标准答案
-│   └── run_case.py             # 四个可执行故障的入口
+│   └── run_case.py             # 十二个可执行故障的入口
 ├── test_agent.py
 ├── test_context_manager.py
 ├── test_demo_app.py
@@ -577,12 +580,13 @@ main.py 格式化为人类可读文本
 | `repeated_tool_call_count` | 被拦截的完全重复调用数 |
 | `force_synthesis` | 是否应该停止调查并强制总结 |
 | `synthesis_attempted` | 是否已经进行过无工具总结 |
-| `repair_attempted` | 是否已经进行过最后一次无工具格式修复 |
+| `repair_attempted` | 是否已经进行过本地 JSON 标点修复或最后一次无工具模型格式修复 |
 | `observations` | 系统生成的结构化工具调用轨迹，只追加不覆盖 |
 | `hypotheses` | 当前完整候选根因集合，包含状态、支持 Observation 和反证 |
 | `context_compaction_count` | 实际使用压缩请求上下文的模型调用次数 |
 | `confirmed_at_tool_call_count` | 首次形成 confirmed 假设时的工具调用计数，用于测量确认后的浪费 |
 | `hypothesis_update_required` | 新成功 Observation 是否仍待写入假设；为真时外部工具暂时关闭 |
+| `final_classification_used` | 调查预算触顶后是否已经使用过唯一一次“只归类、不再调查”调用 |
 | `validation_errors` | 历次报告格式、假设准备度和 Provenance 验证错误，只追加不覆盖 |
 | `evidence_sufficient / early_stopped` | 是否满足确定性证据充分度并提前收尾 |
 | `human_review_*` | 是否启用 HITL、触发原因、次数和是否已经处理 |
@@ -608,13 +612,17 @@ main.py 格式化为人类可读文本
 
 #### `call_model`
 
-先通过 `context_manager.py` 生成压缩请求，再把当前 Profile 的外部工具、内部 `update_hypotheses` Schema 和输出格式发送给模型。普通压缩记忆包含完整假设、假设所引用的全部 Observation，以及最近 4 条尚未归类的 Observation；每条结果摘要最多 700 字符，但保留 ID、参数、成功状态和精确来源。若上一轮产生了新成功证据，请求中会追加醒目的控制门提示，模型必须先更新假设。模型先提出 2–4 个可证伪候选根因，再用最有区分度的工具验证；也可以在证据足够时直接生成最终 JSON。
+先通过 `context_manager.py` 生成压缩请求，再把当前 Profile 的外部工具、按状态开放的 `update_hypotheses` Schema 和输出格式发送给模型。普通压缩记忆包含完整假设、假设所引用的全部 Observation，以及最近 4 条尚未归类的 Observation；普通结果摘要最多 700 字符，`search_code` 与 30 行以内的定向 `read_file` 则最多保留 6,000 字符，避免路径排序靠后的命中或请求窗口后半段关键代码再次被截掉。所有摘要都保留 ID、参数、成功状态和精确来源。初始建模或上一轮产生新成功证据时开放假设工具，模型必须先建立或更新假设；更新成功且没有新证据时，该工具暂时从 Schema 移除，请求追加“推进门”并指出最高信息增益假设的 `next_action`。执行节点还会硬拒绝服务商返回的未开放 `update_hypotheses` 调用，避免兼容 API 忽略 Tool Schema 后继续原地调整置信度；取得新证据后假设工具再次开放。
 
-未确认或仅 supported 的假设必须提供结构化 `next_action`：`tool_name` 表示下一项工具，`purpose` 解释信息价值，`supports_if` 和 `rejects_if` 预先声明什么结果会支持或否定它。这迫使调查先说明“为什么查”，而不是漫无目的地遍历文件。
+普通调查阶段的完整假设集合至少要为一个未确认或 supported 假设提供结构化 `next_action`；低优先级候选可以暂时为 `null`，避免每次归类都被无关候选的动作格式拖住。`tool_name` 表示下一项工具，`arguments` 保存下一次调用的精确参数，`purpose` 解释信息价值，`supports_if` 和 `rejects_if` 预先声明什么结果会支持或否定它。保存假设时，注册器先确认工具属于当前 Profile，再用对应 Pydantic 参数模型做二次校验；无效或已被 Observation 覆盖的低优先级动作会被确定性清空，只要集合内仍有可执行动作就接受本次证据归类。执行时会把模型实际调用与补齐默认值后的动作逐项比较，不一致就返回 `next_action_mismatch`，不会执行。对于 `read_file`，这会阻止原计划 40–60 行、实际又扩大到 1–120 行的空转读取。最后一次受限证据归类后会立即总结，因此不再要求下一调查动作，并统一把终局假设的 `next_action` 清为 `null`。
 
 #### `execute_tools`
 
-外部工具按名称进入注册器，使用 Pydantic 校验参数并执行。每个外部调用生成唯一 `obs-xxx`，记录参数、状态、来源、摘要哈希和耗时。内部 `update_hypotheses` 不访问工作区，也不生成可用于 Evidence 的 Observation；它只能引用已经存在且成功的 Observation，并用完整集合替换图中的假设状态。已有假设时，只要一轮生成新成功 Observation，`hypothesis_update_required` 就会开启；下一轮在假设更新成功前提出的外部调用会收到 `hypothesis_update_required`，不会实际执行。
+外部工具按名称进入注册器，使用 Pydantic 校验参数并执行。每个外部调用生成唯一 `obs-xxx`，记录参数、状态、来源、摘要哈希和耗时。内部 `update_hypotheses` 不访问工作区，也不生成可用于 Evidence 的 Observation；它只能引用已经存在且成功的 Observation，并用完整集合替换图中的假设状态。已有假设时，只要一轮生成新成功 Observation，`hypothesis_update_required` 就会开启；下一轮在假设更新成功前提出的外部调用会收到 `hypothesis_update_required`，不会实际执行。反过来，没有新成功 Observation 时也不会继续提供假设工具，避免模型消耗调查轮数进行无证据的状态微调。同一路径的新 `read_file` 范围若完全落在此前成功 Observation 合并后的连续行区间内，会返回 `duplicate_tool_call` 和覆盖它的 Observation ID；只要请求确实延伸到尚未读取的新行，仍允许执行。
+
+#### `classify_final_evidence`
+
+如果最后一个调查轮次刚取得成功 Observation，但此时已经达到 `max_steps` 或为总结预留的模型预算边界，图不会直接跳到报告。只要总模型预算仍能至少保留一次总结，就额外进入一次受限归类节点：它不增加调查 `step_count`，只向模型暴露 `update_hypotheses`，成功后立即总结，不能再调用外部工具。终局更新只校验假设状态和 Observation 引用，不要求也不保留 `next_action`；这避免“已经不能继续调查，却因为没有下一动作而拒绝把 H1 提升为 supported”的矛盾。这里保留 `tool_choice=auto`，因为 DeepSeek 思考模式会拒绝 named/required tool choice；唯一 Schema、强约束提示和执行层白名单共同构成兼容性更好的边界。该节点最多使用一次；若总预算连归类加总结都无法容纳，则按现有假设诚实收尾。为了守住 `max_model_calls`，归类已经占用最后一个模型修复预留位时不会越预算追加请求；最终 JSON 仍可先经过不消耗模型额度的确定性标点修复。
 
 工具硬预算在执行层再次检查。超过 `MAX_TOOL_CALLS` 的请求不会执行，并收到 `tool_budget_exhausted`，随后图进入总结，不能靠一次并行请求绕过预算。同一轮超过 `MAX_TOOLS_PER_STEP` 的调用收到 `per_step_tool_limit`，但不会立刻强制总结；模型下一轮可以根据已有结果重新排序，只选择信息价值最高的动作。
 
@@ -669,6 +677,12 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 
 交互式 `main.py` 会在以下情况使用 LangGraph `interrupt()` 暂停：达到模型或工具费用阈值、尝试受保护路径、出现多个高置信度 confirmed 假设。状态由 Checkpointer 保存，用户可以选择继续调查、使用已有证据总结或取消；`agent.py` 使用 `Command(resume=...)` 从同一个节点恢复。Evaluation 默认关闭 HITL，避免批处理等待输入。
 
+#### 初始假设与证据归类 Gate
+
+第一次模型请求只提供内部 `update_hypotheses`，要求先保存 2–3 个可证伪候选根因，并至少为其中一个候选提供结构化 `next_action`。提示中同时列出当前 Profile 允许规划的工具及准确参数名，但并不开放这些工具执行，避免模型发明 `list_checks` 或把 `path` 写成 `file_path`。如果 OpenAI-compatible 服务返回了符合相同 `HypothesisUpdate` 结构的 JSON 内容、却省略 Tool Call 外壳，系统会先进行不创造内容的本地标点修复，再按当前 Profile、工具参数、Observation 引用和动作新颖性完整校验；只有通过时才接入假设状态，从而避免为兼容层格式问题浪费一轮模型请求。未声明的文件或 Runtime 工具仍会被 `initial_hypothesis_required` 拒绝，也不会进入 Runtime 审批。初始假设成功后，系统才开放当前 Profile 的外部工具。
+
+一轮产生新的成功 Observation 后，下一轮必须先归类证据。此时模型若继续请求外部工具会被拒绝，若绕过工具直接提交普通报告也会因“最新成功 Observation 尚未归类”而被退回。只有进入预算触顶后的受控总结路径时，系统才允许用低置信度报告诚实说明仍存在的证据缺口。
+
 #### 证据充分度 Gate
 
 只有状态为 `confirmed`、置信度至少 0.8、没有反证，并绑定至少两个成功 Observation 的假设才可能提前停止；两项 Observation 还必须来自不同来源类型，或至少两个不同文件。单条线索和模型自报 high confidence 都不足以触发早停。
@@ -679,11 +693,11 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 
 #### `synthesize_report`
 
-证据充分、达到调查/模型/工具硬预算，或第二次发现完全重复调用后，不再向模型提供工具，只要求它使用现有 Observation 和假设生成报告。此时上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
+证据充分、达到调查/模型/工具硬预算，或第二次发现重复调用后，不再向模型提供外部工具，只要求它使用现有 Observation 和假设生成报告。如果预算触顶时仍有最后一批成功证据待归类，会先经过唯一一次 `classify_final_evidence`。总结上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
 
 #### `repair_report`
 
-如果无工具强制总结仍未通过 Pydantic 或 Provenance 验证，系统会再提供一次不带工具的严格 JSON 格式修复机会。修复请求包含具体字段路径、错误原因、上一次报告和完整证据候选，并明确要求在缺少 confirmed 假设时降低置信度。它不允许重新调查，避免已经取得的 Git 或代码证据因为一次格式错误全部丢失。
+最终报告先严格解析；若只是未转义的代码双引号、缺少成员逗号、尾逗号或未闭合括号，系统会在本地只修复 JSON 标点，不补写报告字段和业务事实，也不增加模型调用。修复结果仍须完整通过 `IncidentReport`、假设就绪度和 Provenance 校验，不能借此绕过证据边界。若本地修复失败且模型预算仍有余量，系统才提供一次不带工具的严格 JSON 格式修复机会；请求包含具体字段路径、上一次报告和完整证据候选，并明确要求在缺少 confirmed 假设时降低置信度。
 
 #### `build_fallback`
 
@@ -701,7 +715,7 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 max_steps = 8
 ```
 
-它控制允许使用工具的调查轮数。除此以外，系统还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。可选补丁提案最多增加一次无工具模型调用。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
+它控制普通调查轮数；最后的受限假设归类、总结和模型格式修复都不增加 `step_count`，但仍计入总模型调用与 Token。本地 JSON 标点修复不调用模型。系统还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；通常预留总结和一次模型格式修复，若最后证据归类使用了其中一个预留位，则优先保证归类和总结、不允许模型修复越过 `max_model_calls`。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。可选补丁提案最多增加一次无工具模型调用。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
 
 LangGraph 框架保险为：
 
@@ -726,7 +740,7 @@ JSON 参数会按键名排序，因此以下调用被视为相同：
 {"path":".","query":"user_id"}
 ```
 
-完全相同的调用不会再次执行，而是返回 `duplicate_tool_call`。第一次重复后，模型还有一轮机会使用已有结果、改查其他证据或直接输出报告；同一次调查中第二次重复才触发强制总结。语义相似但参数不同的调用目前不会被识别，例如搜索 `user_id` 和搜索 `missing user_id` 仍被视为两次不同调查。
+完全相同的调用不会再次执行，而是返回 `duplicate_tool_call`。`read_file` 还会按规范化路径和成功 Observation 的真实行号范围做覆盖判断：已经读取 1–120 行后，再请求 25–75 行会被识别为无新增信息；请求 100–140 行因为包含新行而允许执行。相同规则还会在假设保存阶段提前检查 `next_action`，因此已经完成的搜索或已覆盖的读取范围不能被安排成下一轮动作。第一次执行期重复后，模型还有一轮机会使用已有结果、改查其他证据或直接输出报告；同一次调查中第二次重复才触发强制总结。其他工具的语义相似参数目前不会合并，例如搜索 `user_id` 和搜索 `missing user_id` 仍被视为两次不同调查。
 
 ## 6. 工具注册与八个受控工具
 
@@ -748,6 +762,8 @@ JSON 参数会按键名排序，因此以下调用被视为相同：
 5. 拒绝当前 Profile 不允许的调用；
 6. 将成功和错误统一转换成 `ToolResult` JSON。
 
+严格模式还会递归保证每个对象 Schema 的 `required` 与全部 `properties` 一致，并移除 `default`。业务上可选的参数使用 `integer | null` 等联合类型表达。这满足 OpenAI 兼容服务对严格 Function Calling 的约束，同时本地 Pydantic 模型仍保留默认值，旧的 Python 调用方可以继续省略可选字段。
+
 统一结果格式：
 
 ```json
@@ -765,11 +781,11 @@ JSON 参数会按键名排序，因此以下调用被视为相同：
 
 | 工具 | 参数 | 行为与限制 |
 |---|---|---|
-| `read_file` | `path` | 读取项目内 UTF-8 文件，返回带行号内容，最多 20,000 字符 |
+| `read_file` | `path`、可选 `start_line`/`end_line` | 读取项目内 UTF-8 文件，返回原始行号；已知命中行时可定向读取，单次最多 20,000 字符 |
 | `search_code` | `query` | 在允许的文本后缀中大小写不敏感搜索，最多 50 条匹配 |
 | `list_files` | `path`、`max_depth` | 列出目录和文件，深度 1–5，最多 200 项 |
 
-底层搜索后缀包括 Python、Markdown、文本、JSON、TOML、YAML；但正常 Agent 运行总会激活 Profile，因此 Markdown 会被路径策略过滤，只能经 RAG 获取。文件路径在解析后必须仍位于项目根目录内。
+底层搜索后缀包括 Python、Markdown、文本、JSON、TOML、YAML；但正常 Agent 运行总会激活 Profile，因此 Markdown 会被路径策略过滤，只能经 RAG 获取。文件路径在解析后必须仍位于项目根目录内。`read_file` 的范围两端均包含，行号从 1 开始，且 `end_line` 不能小于 `start_line`。这使 Agent 能根据 `search_code` 的命中行读取小窗口，避免较长文件在上下文压缩后只保留文件开头。
 
 ### 6.3 RAG 工具
 
@@ -806,7 +822,7 @@ Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，
 
 安全清单保存在 `harness.json`。每一项包含 `check_id`、`runner`、`target`、`description`、`timeout_seconds` 和 `expected_exit_codes`。当前 Runner 有三种：
 
-- `demo_case`：target 必须属于四个固定故障案例；
+- `demo_case`：target 必须属于十二个固定故障案例；
 - `unittest`：target 必须是合法的 Python 模块名，不能附加参数；
 - `pytest`：target 必须是仓库内已经存在的 Python 文件或目录，不能越界或使用通配符。
 
@@ -858,7 +874,7 @@ verification_check_ids[]    应使用的已登记 Harness 检查
 
 全部满足时状态为 `validated`；否则状态为 `rejected` 并列出具体原因。`validated` 只证明它是一个当前可审查、范围受控、上下文匹配的候选 diff，并不能证明业务语义正确。`--with-patch` 仍在这里结束，保持 V12 的只读兼容行为。
 
-当服务商支持 `json_schema` 时，请求使用原生严格 Schema；DeepSeek 等只提供 `json_object` 的兼容接口只能保证“这是 JSON”，不能保证字段名正确。V13 因此还把由 Pydantic 模型实时生成的 Schema 放进最终报告、格式修复和补丁请求：报告请求额外列出可引用 Observation 与精确来源，补丁请求额外提供六字段示例、禁止字段，以及每个 Harness ID 的 `purpose` 和 `covers_files`。Schema 由模型类生成而不是复制两套定义，后续字段变化不会让提示与本地校验器悄悄失步。最终本地 Pydantic、Provenance、diff 和 Harness 结果校验仍是唯一可信边界。
+当服务商支持 `json_schema` 时，请求使用原生严格 Schema；DeepSeek 等只提供 `json_object` 的兼容接口仍可能返回标点损坏或字段错误。V14 因此把由 Pydantic 模型实时生成的 Schema 放进最终报告、格式修复和补丁请求，并要求报告最多 3 个 Claim、5 条 Evidence、转义代码双引号：报告请求额外列出可引用 Observation 与精确来源，补丁请求额外提供六字段示例、禁止字段，以及每个 Harness ID 的 `purpose` 和 `covers_files`。仅 JSON 标点损坏时可先本地修复；字段、类型、假设状态、来源和语义仍必须通过原有严格校验。Schema 由模型类生成而不是复制两套定义，后续字段变化不会让提示与本地校验器悄悄失步。
 
 `--verify-patch` 在 `validated` 后进入独立审批。批准后系统在临时副本运行基线、应用 diff、运行补丁后检查并删除副本。模型选择的检查只是建议；系统还会强制加入覆盖每个修改文件的检查和全局回归，且没有覆盖声明的文件直接拒绝验证。最终 `PatchVerificationResult.status` 有 `verified`、`failed`、`rejected` 或 `denied`，并保存每个检查的阶段、退出码、预期是否命中、成功条件、测试计数、失败项、输出摘要、超时和耗时。
 
@@ -914,6 +930,11 @@ DiagnosticHypothesis
 ├── supporting_observation_ids[]
 ├── contradicting_observation_ids[]
 └── next_action
+    ├── tool_name
+    ├── arguments              # 已注册工具的精确参数
+    ├── purpose
+    ├── supports_if
+    └── rejects_if
 ```
 
 `supported` 和 `confirmed` 必须至少引用一条成功 Observation，`rejected` 必须引用反证；不存在或失败的 Observation 不能改变假设状态。模型每次提交的是当前完整集合，这使状态可 checkpoint、可评测，也避免只从自然语言 Thought 猜测 Agent 当前相信什么。
@@ -935,7 +956,7 @@ ToolObservation
 ├── sources[]            # 实际观察到的文件、行、Chunk 或 Commit
 ├── error
 ├── result_sha256        # 带 Observation ID 的结果摘要哈希
-├── result_excerpt       # 最多 1000 字符，便于审计
+├── result_excerpt       # 普通结果最多 1000 字符；read_file 使用行感知摘录
 └── duration_ms
 ```
 
@@ -1041,7 +1062,22 @@ RuntimeError: HTTP 422: timeout_policy_violation
 
 应用把 `WEBHOOK_TIMEOUT_SECONDS` 配置为 30，但外部供应商 Acme Notify v2 的契约规定 `timeout_seconds` 最大为 10。供应商限制位于 Agent 不可见的运行夹具中；Agent 必须通过 RAG 查询 `demo_app/docs/integrations.md` 才能获得准确上限。
 
-以上四个命令应该以非零状态退出。这里“测试成功”的含义是故障按预期稳定复现，而不是业务代码正确。
+### 9.5 扩展故障集
+
+V14 Phase 1 新增八个彼此独立、可真实执行的故障，不再只是复用原有四个 Demo：
+
+| Case | 故障类型 | 对应公共契约 |
+|---|---|---|
+| `async_missing_await` | 同步路径遗漏 `await`，把 coroutine 当字典使用 | `runtime-contracts.md` |
+| `retry_non_idempotent` | 非幂等支付请求在超时后盲目重试，造成重复扣款 | `reliability.md` |
+| `timezone_mismatch` | timezone-aware 时间与 naive 时间直接比较 | `runtime-contracts.md` |
+| `cache_key_version` | 缓存写入和读取使用不同版本命名空间 | `data-contracts.md` |
+| `pagination_off_by_one` | 页码上界错误，最后一页永远未拉取 | `data-contracts.md` |
+| `config_env_rename` | 代码仍读取已废弃环境变量，静默采用旧默认值 | `client-migrations.md` |
+| `transaction_rollback` | 异常被捕获后未回滚事务，下一次 `BEGIN` 失败 | `reliability.md` |
+| `dependency_contract_change` | 第三方 SDK 参数由 `to` 迁移为 `recipient` | `client-migrations.md` |
+
+十二个命令都应该以非零状态退出。这里“测试成功”的含义是故障按预期稳定复现，而不是业务代码正确。
 
 也支持直接脚本启动：
 
@@ -1059,6 +1095,7 @@ RuntimeError: HTTP 422: timeout_policy_violation
 
 ```text
 case_id
+split
 question
 expected_exception
 root_cause_keywords
@@ -1067,7 +1104,7 @@ relevant_docs
 requires_runtime_evidence
 ```
 
-只有 `question` 发送给 Agent，其他字段由评测器保存并用于评分。`evals/`、评测实现和对应测试均对 Agent 隔离；`git_diff` 必须指定单个现有代码文件，不能再用点号读取整个工作区并绕过隔离。
+只有 `question` 发送给 Agent，其他字段由评测器保存并用于评分。`split` 取 `development` 或 `hidden`：开发集用于日常调试，隐藏集用于最终验收，减少围绕标准答案调 Prompt 的数据泄漏。`evals/`、所有 `test_*.py`、Harness 清单与实现、`demo_app/checks/`、评测实现和对应测试均对 Agent 文件工具隔离；`git_diff` 必须指定单个现有代码文件，不能再用点号读取整个工作区并绕过隔离。
 
 ### 10.2 单案例评分
 
@@ -1131,7 +1168,7 @@ AgentRunResult
 | `observation_count` | 成功、失败和重复调用生成的 Observation 总数 |
 | `successful_observation_count` | 成功执行且非重复的 Observation 数量 |
 | `synthesis_used` | 是否使用强制总结 |
-| `format_repair_used` | 是否进行过最后一次无工具格式修复 |
+| `format_repair_used` | 是否进行过本地 JSON 标点修复或最后一次无工具模型格式修复 |
 | `early_stopped` | 是否在调查轮数、模型和工具硬预算之前，因 confirmed 假设证据充分而提前总结 |
 | `hypothesis_count / confirmed_hypothesis_count` | 最终假设总数和已确认数量 |
 | `human_review_count` | LangGraph HITL 人工决策次数 |
@@ -1172,7 +1209,7 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 
 交互式命令行选择 `full_runtime`，但 `ENABLE_RUNTIME_TOOLS=false` 时会在构图前移除 Runtime Schema，此时实际能力等同 `full`。开启后仍需要每次人工批准。普通 `--compare` 有意只比较 `code_only`、`code_rag`、`full`，不会悄悄增加可执行实验。
 
-### 11.2 七个案例的分工
+### 11.2 十五个案例的分工
 
 | Case | 主要目的 |
 |---|---|
@@ -1183,18 +1220,35 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 | `git_regression` | 要求通过 Git 历史给出引入缺陷的提交 `61932b9` |
 | `misleading_documentation` | 检查 Agent 能否识别已废弃的扩容建议并坚持代码证据 |
 | `runtime_required` | 明确要求实际复现，并以 Runtime ID 证明运行确实发生 |
+| `async_missing_await` | 异步边界与 coroutine 类型错误 |
+| `retry_non_idempotent` | 重试策略、幂等性和副作用诊断 |
+| `timezone_mismatch` | 时间语义和时区一致性诊断 |
+| `cache_key_version` | 缓存协议与命名空间版本漂移 |
+| `pagination_off_by_one` | 边界条件和静默数据缺失 |
+| `config_env_rename` | 配置迁移和旧环境变量回退 |
+| `transaction_rollback` | 异常路径事务生命周期管理 |
+| `dependency_contract_change` | 第三方依赖升级后的调用契约变化 |
 
-`documentation_required`、`git_regression`、`misleading_documentation` 和 `runtime_required` 是专门拉开工具能力差异的案例。`git_regression` 依赖本仓库现有 Git 历史；如果导出项目时丢失 `.git`，该案例中的 Git 组也无法取得标准提交哈希。`runtime_required` 在没有已落地 Runtime Evidence 时必定失败，不能靠静态代码猜测通过。
+其中 5 个属于 `development`，10 个属于 `hidden`。隐藏集的题目仍会发给 Agent，但标准答案和 split 元数据始终位于受保护评测目录中，不能被 Agent 工具读取。`documentation_required`、`git_regression`、`misleading_documentation` 和 `runtime_required` 是专门拉开工具能力差异的案例。`git_regression` 依赖本仓库现有 Git 历史；如果导出项目时丢失 `.git`，该案例中的 Git 组也无法取得标准提交哈希。`runtime_required` 在没有已落地 Runtime Evidence 时必定失败，不能靠静态代码猜测通过。
 
 ### 11.3 运行实验
 
-默认组合是全部七个 Case、`full` Profile、每个一次，但费用保护会在真正调用模型前阻止超过 3 次且没有显式确认的实验：
+数据集共有十五个 Case。默认使用 `full` Profile 时，程序会在调用模型前跳过唯一强制要求 Runtime Evidence 的 `runtime_required`，因此静态全量实际运行十四次；费用保护仍会阻止超过 3 次且没有显式确认的实验：
 
 ```powershell
 .\.venv\Scripts\python.exe run_evals.py
 ```
 
-上面的命令会显示 7 次调查并安全退出。日常请用 `--case` 缩小范围；只有确认费用后才追加 `--yes`。
+上面的命令会先说明跳过 `runtime_required`，再显示 14 次调查并安全退出。日常请用 `--case` 或 `--split development` 缩小范围；只有确认费用后才追加 `--yes`。如果显式把 Runtime Case 交给普通 Profile，程序会直接拒绝，而不是花费模型调用后得到一个必然失败的结果。
+
+按数据集分组运行：
+
+```powershell
+.\.venv\Scripts\python.exe run_evals.py --split development --profile full --yes
+.\.venv\Scripts\python.exe run_evals.py --split hidden --profile full --yes
+```
+
+第一条运行 4 个静态 development 案例；第五个 `runtime_required` 必须使用下方的 `full_runtime --allow-runtime` 命令单独运行。
 
 最低成本的 Runtime 专项评测只有一次真实 Agent 调查，并且必须显式声明本次允许执行预登记案例：
 
@@ -1241,7 +1295,7 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 .\.venv\Scripts\python.exe run_evals.py --compare --runs 3 --yes
 ```
 
-标准三种 Profile × 七个 Case × 三次等于 63 次 Agent 调查；每次调查内部又可能请求模型多次。不要把全量矩阵当作烟雾测试：先跑一个静态案例的三组对照，再单独跑一次 Runtime Case，最后才按研究需要增加重复次数。
+标准三种 Profile × 十四个静态 Case × 三次等于 126 次 Agent 调查；`runtime_required` 不进入普通 Profile 对照。每次调查内部又可能请求模型多次。不要把全量矩阵当作烟雾测试：先跑开发集或一个静态案例的三组对照，再单独跑一次 Runtime Case，最后才按研究需要增加重复次数。
 
 推荐的静态区分度对照有 9 次，必须显式确认：
 
@@ -1258,6 +1312,7 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 
 ```text
 --case CASE_ID       只运行指定案例，可重复
+--split SPLIT        选择 all、development 或 hidden
 --max-steps N        每次调查的模型轮数预算
 --profile PROFILE    选择 Profile，可重复
 --compare            使用全部三种 Profile
@@ -1324,12 +1379,12 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 155 项测试，覆盖：
+当前共有 193 项离线测试，覆盖：
 
 - 模型服务能力配置；
-- 工具注册、严格参数和统一错误；
+- 工具注册、严格参数、严格 Schema 的 `properties`/`required` 一致性和统一错误；
 - 路径越界、敏感配置和内部目录隔离；
-- 文件、RAG 和 Git 工具；
+- 文件定向行范围、RAG 和 Git 工具；
 - Runtime/Harness 工具白名单、严格参数、固定 Runner、结构化超时、环境密钥隔离和无 Shell 执行；
 - Harness 清单重复 ID、未知 ID、路径越界、内部评测目标与模型自带命令字段的拒绝；
 - `unittest` 结果计数、失败用例提取、预期非零退出码和真实 Runtime Observation；
@@ -1350,6 +1405,14 @@ ExperimentRun
 - 内部假设工具的格式、ID、成功 Observation 与状态约束；
 - 两项独立来源早停和单条证据不早停；
 - 开放假设必须提供结构化下一步调查动作；
+- 初始无假设时模型侧只开放 `update_hypotheses`，执行层拒绝越门的外部工具，Runtime 越门调用不会触发审批；
+- `next_action.arguments` 必须通过对应工具参数模型校验；已成功执行的相同调用和已被 Observation 完整覆盖的读取范围不能再次保存为下一动作，部分重叠但包含新行仍允许；
+- 执行层拒绝与最高优先级结构化动作不一致的工具和擅自扩大的定向读取范围；
+- 假设更新后没有新证据时隐藏假设工具，并把最高优先级 `next_action` 推进到下一轮外部调查；执行层拒绝模型越过 Schema 重复更新；
+- 定向读取 40–60 行的关键后段代码在上下文压缩后仍然可见；大范围读取会保留文件头尾和既有 `search_code` 命中附近窗口；
+- 同文件已覆盖区间会被识别为重复，部分重叠但包含新行仍允许执行；
+- 最后一个调查轮次的新证据会获得一次只开放假设工具的归类机会，归类后立即总结；
+- 假模型 `missing_user_id` 全链路覆盖搜索、定向读取调用方、API、Service、confirmed 假设与合法 Claim—Evidence 报告；
 - 上下文压缩保留假设引用证据和最近未分类证据，并移除悬空 Tool 消息；
 - 最终总结上下文保留所有具有来源的成功 Observation；
 - 新证据未更新假设时阻止后续外部工具，更新完成后恢复调查；
@@ -1378,7 +1441,7 @@ ExperimentRun
 - 强制总结失败后的单次无工具格式修复；
 - Tool Profile Schema 过滤和执行层越权拒绝；
 - 多行命令行输入；
-- 四个可执行 Demo 故障稳定复现；
+- 十二个可执行 Demo 故障稳定复现，并校验十五个评测 Case 的开发集/隐藏集划分；
 - Profile 对 RAG 文档和外部系统夹具的路径级隔离；
 - 文档得分必须由 `retrieve_docs` 调用触发；
 - 精确错误码和配置键在混合检索中获得额外权重，供应商契约优先召回；
@@ -1401,7 +1464,7 @@ ExperimentRun
 - 所有文件路径解析后必须仍在项目根目录；
 - `api.env`、`.env` 等敏感配置不可读取或搜索；
 - `.git`、`.venv`、缓存、构建目录和依赖目录不会进入文件列表或代码搜索；
-- `evals/`、评测实现、评测测试、`.incident_cache/`、`.incident_reports/` 和 `.incident_state/` 对 Agent 不可见；
+- `evals/`、所有 `test_*.py`、Harness 实现、`demo_app/checks/`、评测实现、`.incident_cache/`、`.incident_reports/` 和 `.incident_state/` 对 Agent 文件工具不可见；
 - `git_diff` 只接受单个现有文件，不能用仓库根目录批量泄露隐藏内容；
 - 二进制或非 UTF-8 文件不会作为文本发送给模型；
 - 文件内容、搜索命中和目录项都有数量或长度限制。
@@ -1479,7 +1542,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ### Agent 调用了很多工具
 
-一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。系统默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。当前去重仍只识别完全相同的工具名与参数，尚未识别语义相似调查。
+一次模型响应可以同时提出多个工具调用，所以模型轮数和工具次数不同。系统默认每轮最多真正执行 3 个外部工具，超出的调用会收到 `per_step_tool_limit`；模型需要在下一轮按信息价值重排。已有假设并取得新证据后，模型还必须先通过 `update_hypotheses` 归类证据，否则新外部调用会被控制门拒绝；归类完成后若没有新证据，假设工具暂时隐藏，下一轮必须精确执行现有 `next_action` 的工具和参数。最后一轮证据会在预算允许时获得一次只归类、不继续调查的调用。confirmed 假设获得两项独立来源后会提前总结。硬预算分别限制模型、工具和 Runtime 调用，交互模式达到软阈值或请求 Runtime 时暂停询问用户。重复保护除完全相同参数外，还能识别同一文件被既有成功读取区间完全覆盖的请求；其他语义相似调查仍不会自动合并。
 
 ### Evaluation 为什么提示费用保护
 
@@ -1527,14 +1590,14 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ## 16. 当前限制
 
-- Demo 只有七个评测案例，规模仍然太小，不能代表生产环境；
-- Case、代码注释和事故文档比较明确，存在玩具数据集偏简单的问题；
+- Demo 已扩展到十五个评测案例、十二个独立可执行故障，但规模仍不能代表真实生产分布；
+- 已移除业务代码中的显式 `BUG-*` 标签和直接给出答案的事故复盘文档，但公共契约、故障代码与评测数据仍由项目作者构造，存在合成数据偏差；
 - 根因关键词不理解同义词，也可能被关键词投机；
 - Observation 能确认模型实际看过来源，但不能完全判断自然语言 Claim 与证据的语义蕴含关系；
 - 当前没有 LLM-as-a-Judge；
 - 已记录服务商返回的 Token，但尚未根据不同模型价格计算真实金额；服务商不返回 usage 时 Token 显示 0；
-- Observation 只保存最多 1000 字符结果摘要和 SHA-256，完整工具内容主要保留在 LangGraph 消息状态中；
-- 发给模型的压缩记忆将每个 Observation 摘要限制为 700 字符；普通调查只保留所有已引用证据和最近 4 条未引用结果，最终报告阶段则恢复全部带来源的成功结果。长结果中的次要细节仍可能被省略，但本地 Checkpoint 中的完整消息不会被删除；
+- Observation 保存结果摘要和 SHA-256：普通工具最多 1,000 字符；`read_file` 的审计摘录最多约 50,000 字符，超过限制时仍以有效 JSON 保留头尾行并截断超长单行；完整工具消息继续保存在 LangGraph 状态中；
+- 发给模型的压缩记忆通常将每个 Observation 摘要限制为 700 字符；起止范围明确且不超过 30 行的 `read_file` 最多保留 6,000 字符。更大的读取会重建一个最多 40 行的有效 JSON 摘录，优先保留文件开头、`search_code` 命中附近窗口和文件尾部。普通调查只保留所有已引用证据和最近 4 条未引用结果，最终报告阶段则恢复全部带来源的成功结果；未命中窗口内的中间细节仍可能被省略，但本地 Checkpoint 中的完整消息不会被删除；
 - 上下文压缩的实际 Token 节省依赖模型服务是否返回 usage，必须通过同一 Case、同一模型的真实对照确认，离线测试不能证明具体节省比例；
 - `confidence` 是模型自我声明，不是校准后的概率；
 - 已有确定性假设 Gate，但“两个独立来源”是工程启发式，不等于自然语言语义蕴含证明；
@@ -1560,10 +1623,10 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 将 V13 作为稳定基线：运行 `doctor`，手工验收一次 `--with-patch` 只读提案、一次 `--verify-patch` 行为失败和一次真正 `verified`；
-2. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用、多模型对比和 Judge 一致性评测；
-3. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库；
-4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
+1. 先运行 4 个静态 development 案例，再用 `full_runtime --allow-runtime` 单独运行第五个 Runtime development 案例；确认数据和评分稳定后冻结配置，对 10 个 hidden 案例运行正式对照，报告通过率、证据落地、工具调用、Token 和耗时；
+2. V14 Phase 2 将本地确定性规则与 LLM Judge 组合，并测量 Judge 与规则评分的一致性；Judge 结果不能覆盖引用、Runtime 和安全边界等硬规则；
+3. V14 Phase 3 增加可演示的只读 Web/API 产品入口和单案例报告页，复用现有 Graph、Session 与审批逻辑；
+4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。
 

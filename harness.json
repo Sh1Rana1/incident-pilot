@@ -42,6 +42,86 @@
       "covers_files": ["demo_app/app/webhook.py"]
     },
     {
+      "check_id": "demo_async_missing_await",
+      "runner": "demo_case",
+      "target": "async_missing_await",
+      "description": "复现异步加载结果被同步代码直接使用的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/async_jobs.py"]
+    },
+    {
+      "check_id": "demo_retry_non_idempotent",
+      "runner": "demo_case",
+      "target": "retry_non_idempotent",
+      "description": "复现支付结果不确定时直接重试造成的重复扣款",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/retry_policy.py"]
+    },
+    {
+      "check_id": "demo_timezone_mismatch",
+      "runner": "demo_case",
+      "target": "timezone_mismatch",
+      "description": "复现带时区和不带时区时间直接比较的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/time_window.py"]
+    },
+    {
+      "check_id": "demo_cache_key_version",
+      "runner": "demo_case",
+      "target": "cache_key_version",
+      "description": "复现缓存读写使用不同 Key 版本的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/cache_store.py"]
+    },
+    {
+      "check_id": "demo_pagination_off_by_one",
+      "runner": "demo_case",
+      "target": "pagination_off_by_one",
+      "description": "复现分页循环遗漏最后一页的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/pagination.py"]
+    },
+    {
+      "check_id": "demo_config_env_rename",
+      "runner": "demo_case",
+      "target": "config_env_rename",
+      "description": "复现环境变量迁移后仍读取旧配置名的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/settings.py"]
+    },
+    {
+      "check_id": "demo_transaction_rollback",
+      "runner": "demo_case",
+      "target": "transaction_rollback",
+      "description": "复现导入失败后事务状态未清理的故障",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/transactions.py"]
+    },
+    {
+      "check_id": "demo_dependency_contract_change",
+      "runner": "demo_case",
+      "target": "dependency_contract_change",
+      "description": "复现 Notify SDK 升级后的关键字参数不兼容",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/notification_client.py"]
+    },
+    {
       "check_id": "demo_smoke_suite",
       "runner": "unittest",
       "target": "demo_app.checks.test_smoke",

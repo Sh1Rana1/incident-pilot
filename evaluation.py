@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from statistics import mean
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -22,6 +22,7 @@ from provenance import evidence_is_grounded, validate_report_provenance
 
 class EvaluationCase(StrictModel):
     case_id: str
+    split: Literal["development", "hidden"] = "development"
     question: str
     expected_exception: str
     root_cause_keywords: list[str]
@@ -282,7 +283,11 @@ def score_case(
     )
 
 
-def load_cases(directory: Path, case_ids: Optional[set[str]] = None) -> list[EvaluationCase]:
+def load_cases(
+    directory: Path,
+    case_ids: Optional[set[str]] = None,
+    split: Literal["development", "hidden"] | None = None,
+) -> list[EvaluationCase]:
     cases = [
         EvaluationCase.model_validate_json(path.read_text(encoding="utf-8"))
         for path in sorted(directory.glob("*.json"))
@@ -292,6 +297,8 @@ def load_cases(directory: Path, case_ids: Optional[set[str]] = None) -> list[Eva
         missing = case_ids - {case.case_id for case in cases}
         if missing:
             raise ValueError(f"未知评测案例: {', '.join(sorted(missing))}")
+    if split is not None:
+        cases = [case for case in cases if case.split == split]
     if not cases:
         raise ValueError("没有找到可运行的评测案例")
     return cases

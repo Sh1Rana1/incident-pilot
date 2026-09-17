@@ -57,6 +57,9 @@ HypothesisStatus = Literal["unverified", "supported", "rejected", "confirmed"]
 
 class InvestigationAction(StrictModel):
     tool_name: str = Field(description="下一步只选择一个最有区分度的工具")
+    arguments: dict[str, Any] = Field(
+        description="传给已注册工具的精确参数；保存假设时会按对应工具 Schema 校验",
+    )
     purpose: str = Field(description="为什么此工具能区分当前候选假设")
     supports_if: str = Field(description="看到什么结果会支持该假设")
     rejects_if: str = Field(description="看到什么结果会否定该假设")
@@ -216,7 +219,7 @@ class RunMetrics(StrictModel):
     synthesis_used: bool = Field(description="是否使用了无工具的强制总结节点")
     format_repair_used: bool = Field(
         default=False,
-        description="是否执行过最后一次无工具格式修复",
+        description="是否执行过本地 JSON 标点修复或最后一次无工具模型格式修复",
     )
     early_stopped: bool = Field(
         default=False,

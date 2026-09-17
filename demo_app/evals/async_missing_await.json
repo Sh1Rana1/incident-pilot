@@ -1,0 +1,9 @@
+{
+  "case_id": "async_missing_await",
+  "split": "hidden",
+  "question": "账单展示时报 TypeError: 'coroutine' object is not subscriptable，请结合代码和运行约定定位根因。",
+  "expected_exception": "TypeError",
+  "root_cause_keywords": ["await", "coroutine", "load_invoice"],
+  "evidence_files": ["demo_app/app/async_jobs.py"],
+  "relevant_docs": ["demo_app/docs/runtime-contracts.md"]
+}

@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from pathlib import Path
 
 from config import resolve_capabilities
 from main import format_report
@@ -25,6 +26,30 @@ class RegistryTests(unittest.TestCase):
     def test_schema_is_strict(self) -> None:
         schemas = registry.schemas()
         self.assertTrue(all(item["function"]["strict"] for item in schemas))
+
+    def test_strict_schema_requires_every_property_and_omits_defaults(self) -> None:
+        read_schema = next(
+            item["function"]["parameters"]
+            for item in registry.schemas(strict=True)
+            if item["function"]["name"] == "read_file"
+        )
+        self.assertEqual(
+            set(read_schema["required"]),
+            set(read_schema["properties"]),
+        )
+        self.assertNotIn("default", read_schema["properties"]["start_line"])
+        self.assertIn(
+            {"type": "null"},
+            read_schema["properties"]["start_line"]["anyOf"],
+        )
+
+        # 非严格模式保留普通 Pydantic Schema，兼容不要求严格工具格式的服务商。
+        non_strict = next(
+            item["function"]["parameters"]
+            for item in registry.schemas(strict=False)
+            if item["function"]["name"] == "read_file"
+        )
+        self.assertEqual(non_strict["required"], ["path"])
 
     def test_unknown_tool_has_standard_result(self) -> None:
         result = call_tool("missing", {})
@@ -68,6 +93,29 @@ class FileToolTests(unittest.TestCase):
         result = call_tool("read_file", {"path": "main.py"})
         self.assertTrue(result.ok)
         self.assertTrue(any("def main" in line["content"] for line in result.data["lines"]))
+
+    def test_read_file_supports_targeted_line_range(self) -> None:
+        result = call_tool("read_file", {
+            "path": "demo_app/run_case.py",
+            "start_line": 44,
+            "end_line": 50,
+        })
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["lines"][0]["line"], 44)
+        self.assertEqual(result.data["lines"][-1]["line"], 50)
+        self.assertTrue(any(
+            'case_id == "missing_user_id"' in line["content"]
+            for line in result.data["lines"]
+        ))
+
+    def test_read_file_rejects_reversed_line_range(self) -> None:
+        result = call_tool("read_file", {
+            "path": "main.py",
+            "start_line": 20,
+            "end_line": 10,
+        })
+        self.assertFalse(result.ok)
+        self.assertIn("end_line", json.dumps(result.meta.get("validation_errors")))
 
     def test_search_code_returns_structured_matches(self) -> None:
         result = call_tool("search_code", {"query": "run_agent"})
@@ -147,6 +195,44 @@ class FileToolTests(unittest.TestCase):
             item["path"] in {"test_demo_app.py", "test_runtime_tools.py"}
             for item in searched.data["matches"]
         ))
+
+        root_listing = ToolResult.model_validate_json(registry.execute(
+            "list_files", '{"path":".","max_depth":3}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        listed_paths = {item["path"] for item in root_listing.data["entries"]}
+        self.assertFalse(any(Path(path).name.startswith("test_") for path in listed_paths))
+        self.assertNotIn("harness.py", listed_paths)
+        self.assertNotIn("runtime_tools.py", listed_paths)
+        self.assertFalse(any("/checks/" in f"/{path}/" for path in listed_paths))
+
+        leaked_answer = ToolResult.model_validate_json(registry.execute(
+            "search_code", '{"query":"API 入口缺少 user_id 校验"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        self.assertEqual(leaked_answer.data["matches"], [])
+
+        business_search = ToolResult.model_validate_json(registry.execute(
+            "search_code", '{"query":"user_id"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        business_paths = {item["path"] for item in business_search.data["matches"]}
+        self.assertIn("demo_app/app/service.py", business_paths)
+        self.assertNotIn("graph.py", business_paths)
+        self.assertFalse(any(Path(path).name.startswith("test_") for path in business_paths))
+        self.assertNotIn("harness.py", business_paths)
+        self.assertNotIn("runtime_tools.py", business_paths)
+
+        blocked_test = ToolResult.model_validate_json(registry.execute(
+            "read_file", '{"path":"test_graph.py"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        self.assertFalse(blocked_test.ok)
+        blocked_check = ToolResult.model_validate_json(registry.execute(
+            "read_file", '{"path":"demo_app/checks/api_contract_check.py"}',
+            allowed_tools=allowed, tool_profile="full_runtime",
+        ))
+        self.assertFalse(blocked_check.ok)
 
     def test_generated_evaluation_reports_are_not_visible(self) -> None:
         listed = call_tool("list_files", {"path": ".", "max_depth": 2})

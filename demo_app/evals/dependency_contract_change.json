@@ -1,0 +1,9 @@
+{
+  "case_id": "dependency_contract_change",
+  "split": "hidden",
+  "question": "升级 Notify SDK 后发送消息出现 TypeError: send_message() got an unexpected keyword argument 'to'，请结合迁移约定定位兼容性问题。",
+  "expected_exception": "TypeError",
+  "root_cause_keywords": ["SDK v3", "recipient", "to="],
+  "evidence_files": ["demo_app/app/notification_client.py"],
+  "relevant_docs": ["demo_app/docs/client-migrations.md"]
+}

@@ -1,5 +1,6 @@
 """V12.1.1 长期事故记忆测试；只使用本地 SQLite 和假模型。"""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,7 +110,31 @@ class IncidentMemoryTests(unittest.TestCase):
     def test_new_session_injects_only_approved_similar_memory(
         self, create_client_mock
     ) -> None:
-        client = FakeClient([FakeMessage(content=VALID_REPORT)])
+        initial_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "历史线索提示入口可能缺少字段校验",
+            "status": "unverified",
+            "confidence": 0.3,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "arguments": {"path": "demo_app/app/api.py"},
+                "purpose": "用当前项目代码验证历史线索",
+                "supports_if": "入口直接透传 payload",
+                "rejects_if": "入口已经校验必填字段",
+            },
+        }]})
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-hypothesis", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": initial_hypotheses,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
         create_client_mock.return_value = (client, runtime_config())
         fields = memory_candidate_fields("KeyError: 'user_id'", fake_result())
         with tempfile.TemporaryDirectory() as directory:

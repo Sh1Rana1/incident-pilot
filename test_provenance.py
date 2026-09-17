@@ -24,6 +24,33 @@ def report_for(evidence: Evidence) -> IncidentReport:
 
 
 class ProvenanceTests(unittest.TestCase):
+    def test_search_code_excerpt_keeps_late_matches(self) -> None:
+        matches = [
+            {"path": f"demo_app/app/noise_{index}.py", "line": index,
+             "content": "user_id = value" + "x" * 80}
+            for index in range(1, 12)
+        ]
+        matches.append({
+            "path": "demo_app/app/service.py",
+            "line": 9,
+            "content": 'user_id = payload["user_id"]',
+        })
+        payload = json.dumps({
+            "ok": True,
+            "data": {"query": "user_id", "matches": matches},
+            "error": None,
+            "meta": {},
+        })
+
+        observation, _ = build_observation(
+            "obs-001", "call-search", 1, "search_code",
+            json.dumps({"query": "user_id"}), payload, 1,
+        )
+
+        self.assertGreater(len(observation.result_excerpt), 1000)
+        self.assertIn("demo_app/app/service.py", observation.result_excerpt)
+        self.assertIn('payload[\\\"user_id\\\"]', observation.result_excerpt)
+
     def test_long_rag_chunks_keep_real_line_ranges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

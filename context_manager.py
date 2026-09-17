@@ -1,4 +1,4 @@
-"""V8.1.1 模型上下文压缩：调查时精简，收尾时保全证据候选。"""
+"""V14 模型上下文压缩：保留定向窗口与搜索命中附近关键代码。"""
 
 import json
 from typing import Any
@@ -8,6 +8,101 @@ from models import DiagnosticHypothesis, ToolObservation
 
 MAX_RECENT_UNREFERENCED_OBSERVATIONS = 4
 MAX_OBSERVATION_EXCERPT_CHARS = 700
+MAX_SEARCH_CODE_EXCERPT_CHARS = 6000
+MAX_TARGETED_READ_EXCERPT_CHARS = 6000
+MAX_CONTEXT_READ_LINES = 40
+CONTEXT_READ_HEAD_LINES = 15
+CONTEXT_READ_TAIL_LINES = 5
+CONTEXT_ANCHOR_RADIUS = 3
+
+
+def _normalized_path(path: str) -> str:
+    return path.replace("\\", "/").lstrip("./").lower()
+
+
+def _read_anchor_lines(
+    observations: list[ToolObservation],
+) -> dict[str, set[int]]:
+    """收集搜索命中行，供大范围读取在压缩时保留邻近代码。"""
+    anchors: dict[str, set[int]] = {}
+    for observation in observations:
+        if not observation.ok or observation.tool_name != "search_code":
+            continue
+        for source in observation.sources:
+            if not source.file or source.line_start is None:
+                continue
+            anchors.setdefault(_normalized_path(source.file), set()).add(
+                source.line_start
+            )
+    return anchors
+
+
+def _compact_large_read_excerpt(
+    observation: ToolObservation,
+    anchor_lines: set[int],
+) -> str:
+    try:
+        excerpt = json.loads(observation.result_excerpt)
+    except (json.JSONDecodeError, TypeError):
+        return observation.result_excerpt[:MAX_OBSERVATION_EXCERPT_CHARS]
+    lines = excerpt.get("lines")
+    if not isinstance(lines, list) or len(lines) <= 30:
+        return observation.result_excerpt[:MAX_TARGETED_READ_EXCERPT_CHARS]
+
+    available = {
+        item.get("line"): item
+        for item in lines
+        if isinstance(item, dict) and isinstance(item.get("line"), int)
+    }
+    ordered_numbers = sorted(available)
+    priority = list(ordered_numbers[:CONTEXT_READ_HEAD_LINES])
+    for anchor in sorted(anchor_lines):
+        priority.extend(
+            number
+            for number in range(
+                anchor - CONTEXT_ANCHOR_RADIUS,
+                anchor + CONTEXT_ANCHOR_RADIUS + 1,
+            )
+            if number in available
+        )
+    priority.extend(ordered_numbers[-CONTEXT_READ_TAIL_LINES:])
+    selected_numbers = sorted(dict.fromkeys(priority[:MAX_CONTEXT_READ_LINES]))
+    compact = {
+        "path": excerpt.get("path", observation.arguments.get("path", "")),
+        "requested_start_line": excerpt.get("requested_start_line"),
+        "requested_end_line": excerpt.get("requested_end_line"),
+        "lines": [available[number] for number in selected_numbers],
+        "omitted_middle_line_count": max(0, len(lines) - len(selected_numbers)),
+        "selection": "head_tail_and_search_hit_windows",
+    }
+    return json.dumps(compact, ensure_ascii=False)
+
+
+def _observation_excerpt(
+    observation: ToolObservation,
+    read_anchors: dict[str, set[int]],
+) -> str:
+    """小窗口完整保留；大范围读取保留头尾与搜索命中附近代码。"""
+    if observation.tool_name == "read_file":
+        start = observation.arguments.get("start_line")
+        end = observation.arguments.get("end_line")
+        if (
+            isinstance(start, int)
+            and isinstance(end, int)
+            and end >= start
+            and end - start + 1 <= 30
+        ):
+            return observation.result_excerpt[:MAX_TARGETED_READ_EXCERPT_CHARS]
+        path = _normalized_path(str(observation.arguments.get("path", "")))
+        return _compact_large_read_excerpt(
+            observation,
+            read_anchors.get(path, set()),
+        )
+    if observation.tool_name == "search_code":
+        # 搜索命中是后续定向读取的索引；完整保留常规结果，避免路径排序
+        # 靠后的 failure site / caller 只留下 source、却丢掉真实命中内容。
+        return observation.result_excerpt[:MAX_SEARCH_CODE_EXCERPT_CHARS]
+    return observation.result_excerpt[:MAX_OBSERVATION_EXCERPT_CHARS]
 
 
 def _first_message(messages: list[dict], role: str) -> dict | None:
@@ -69,6 +164,7 @@ def compact_messages(
         hypotheses,
         final_report=final_report,
     )
+    read_anchors = _read_anchor_lines(observations)
     memory: dict[str, Any] = {
         "hypotheses": [item.model_dump(mode="json") for item in hypotheses],
         "observations": [
@@ -81,7 +177,7 @@ def compact_messages(
                 "repeated": item.repeated,
                 "sources": [source.model_dump(mode="json") for source in item.sources],
                 "error": item.error,
-                "result_excerpt": item.result_excerpt[:MAX_OBSERVATION_EXCERPT_CHARS],
+                "result_excerpt": _observation_excerpt(item, read_anchors),
             }
             for item in selected
         ],

@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 64, in run_case
+    invoice_total("invoice-001")
+  File "demo_app/app/async_jobs.py", line 11, in invoice_total
+    return pending["total"]
+TypeError: 'coroutine' object is not subscriptable

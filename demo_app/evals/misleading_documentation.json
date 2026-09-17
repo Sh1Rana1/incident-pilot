@@ -1,5 +1,6 @@
 {
   "case_id": "misleading_documentation",
+  "split": "hidden",
   "question": "有人根据旧文档建议扩大连接池，但连续处理无效任务后仍会 connection pool exhausted。请判断旧建议是否有效并找出真正根因。",
   "expected_exception": "RuntimeError",
   "root_cause_keywords": ["release", "异常", "泄漏"],

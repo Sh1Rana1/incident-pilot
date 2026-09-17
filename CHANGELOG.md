@@ -13,6 +13,69 @@
 
 ---
 
+## V14（开发中）Phase 1：Expanded Benchmark
+
+### 数据集扩充
+
+- 将可独立执行的 Demo 故障从 4 个扩展到 12 个，新增异步遗漏 `await`、非幂等重试、时区混用、缓存键版本漂移、分页边界错误、环境变量迁移、事务未回滚和第三方 SDK 契约变化八类故障。
+- 将确定性 Evaluation 从 7 个扩展到 15 个；新增案例均具有独立问题、异常、根因关键词、代码证据和公共契约文档。
+- 为新增案例补充 8 份简化日志、4 份公共契约文档和 2 个受保护外部系统 Fixture。
+- Harness 从 6 项扩展到 14 项检查，十二个 Demo 均可通过预登记 Runner 稳定复现。
+
+### 防泄漏与数据划分
+
+- `EvaluationCase` 新增 `split=development|hidden`，当前为 5 个开发案例和 10 个隐藏案例；`run_evals.py` 新增 `--split all|development|hidden`。
+- 删除三份直接给出根因和修复答案的事故复盘文档，移除业务源码中的 `BUG-*` 标签和直白缺陷说明；RAG 只保留现实项目中合理存在的 API、运行、可靠性、数据及客户端迁移契约。
+- Evaluation 标准答案、Fixture 与内部目录继续对 Agent 隔离；隐藏集只隐藏评分标签，不隐藏用户实际会提供的问题描述。
+- Agent 文件工具现在统一隐藏所有 `test_*.py`、`harness.py`、`runtime_tools.py` 与 `demo_app/checks/`，避免从断言、补丁样例或检查实现中直接读到答案，也减少全局搜索噪声。
+
+### 评测路由修复
+
+- 普通静态 Profile 在未显式选择 Case 时会在模型调用前跳过 `requires_runtime_evidence=true` 的案例，并打印正确的独立运行方式。
+- 如果用户显式把 Runtime Case 交给 `code_only`、`code_rag` 或 `full`，程序会在任何模型调用前拒绝；只有 `full_runtime --allow-runtime` 能保留该案例。
+- 普通全量实验现在是 14 个静态案例，development 静态实验是 4 个；`runtime_required` 始终单独计量，避免把工具配置错误统计成 Agent 诊断失败。
+
+### 调查推进与成本控制
+
+- 新增初始假设硬门：无假设时模型请求只暴露 `update_hypotheses`；执行层用 `initial_hypothesis_required` 拒绝兼容模型返回的未声明外部工具。该门优先于 Runtime Review，因此越门的执行请求不会诱导用户批准本不该发生的运行。
+- `update_hypotheses` 改为按证据状态开放：初始建模以及存在待归类新证据时提供；成功更新且没有新证据时从下一轮 Tool Schema 暂时移除。
+- `DiagnosticHypothesis.next_action` 新增必填 `arguments`；保存假设时按当前 Profile 和已注册工具的 Pydantic 参数模型校验，推进门展示精确参数，执行层用补齐默认值后的参数再次比对，不一致返回 `next_action_mismatch`，因此不能把计划的 40–60 行擅自扩大为 1–120 行。
+- 假设保存新增动作新颖性校验：与成功 Observation 完全相同的工具调用直接拒绝；`read_file` 下一范围被一个或多个连续成功读取区间覆盖时同样拒绝，部分重叠且包含新行时仍允许。重复动作不会再消耗下一轮才被发现。
+- 初始假设轮会附带当前 Profile 的精简工具参数目录，但仍只开放 `update_hypotheses` 执行；模型可以准确规划 `path/start_line/end_line` 等参数，不再因看不到外部 Tool Schema 而发明工具或字段。
+- 兼容服务若在初始轮输出严格的 `HypothesisUpdate` JSON、却省略 Function Call 外壳，系统会在无既有假设时进行本地标点修复并复用完整假设校验后接入状态；它不能执行工具或绕过 Profile，只用于回收原本会白白消耗的格式重试轮次。
+- `next_action` 的集合约束改为“至少一个开放假设可推进”：无效、Profile 不允许或已被 Observation 覆盖的低优先级动作会被清空并记录在 `ignored_next_actions`，只要仍有合法动作就接受整组证据归类，避免一个次要候选耗掉整轮模型预算；若全部开放候选均不可执行，更新仍会被拒绝。
+- 无待归类证据时的“推进门”改为优先补齐尚未直接读取的文件和来源类型，再以 supported 状态和置信度打破平局；`search_code` 的单行命中不视为已经读取文件，因此关键调用窗口会先被定向展开，随后再追踪新 caller、failure site 或契约。
+- 执行层新增 `hypothesis_update_not_allowed` 硬拒绝：即使兼容模型返回未在本轮 Schema 中声明的 `update_hypotheses`，也不能覆盖现有假设或提高置信度，必须先执行 `next_action`。
+- `read_file` 新增可选 `start_line`/`end_line`，允许按 `search_code` 命中行读取局部窗口，避免长文件的关键调用点在上下文压缩摘要中丢失。
+- `read_file` Observation 改用行感知摘录：不超过 30 行的定向读取最多保留 6,000 字符并在压缩记忆中完整保留；大范围读取会结合既有 `search_code` 来源，重建包含文件头尾和命中行附近窗口的有效 JSON 摘录。已验证 1–80 行读取在压缩后仍保留 API 导入和第 46–47 行复现分支。
+- `search_code` 的审计摘录和压缩记忆上限提高到 6,000 字符，避免多文件搜索时排在后面的 Service/failure-site 命中只留下来源行号却丢失真实代码内容。
+- 移除 Agent 控制流源码注释中的 Demo 业务字段示例，并新增隔离断言，防止搜索 `user_id` 时把 `graph.py` 当成业务证据噪声；Evaluation、测试、Harness 等既有保护边界保持不变。
+- 最终报告新增不消耗模型额度的确定性 JSON 标点修复，仅处理未转义代码引号、缺失成员逗号、尾逗号和未闭合容器；它不补写字段或事实，修复后仍必须通过 Pydantic、假设就绪度与 Provenance 全套验证。成功使用时沿用 `format_repair_used` 指标，能够与未修复的正常报告区分。
+- 强制总结提示限制为最多 3 个 Claim、5 条 Evidence，并要求对代码双引号做 JSON 转义，降低兼容服务在长报告末尾产生非法 JSON 的概率；本地修复失败时仍保留原有单次无工具模型修复与确定性降级路径。
+- 重复保护新增文件区间覆盖判断：同一路径的新范围被此前一个或多个连续成功读取区间完全覆盖时不再执行，并返回覆盖 Observation ID；部分重叠但确实包含新行时仍允许读取。
+- 新增 `classify_final_evidence` 受限节点：最后一个调查轮次产生成功 Observation 时，只要总模型预算还能容纳“归类 + 总结”，就额外提供一次只含 `update_hypotheses` Schema 的调用，不增加调查 `step_count`，归类后立即总结且不再开放外部工具。为兼容默认启用思考模式的 DeepSeek V4，保持 `tool_choice=auto`，不使用会触发 400 的 named/required 形式；唯一 Schema 与执行层白名单仍阻止外部工具。该调用会占用原格式修复预留位，系统不会越过 `max_model_calls`。
+- 修复终局归类仍套用普通调查动作门的问题：`classify_final_evidence` 之后不会再开放工具，因此允许 supported/unverified 假设不提供 `next_action`，并确定性清除终局更新中的陈旧动作；Observation 引用、状态与置信度规则仍照常校验。普通调查阶段仍至少需要一个可执行动作。
+- 修复严格 Function Calling 的兼容格式：注册器递归保证对象 Schema 的 `required` 覆盖全部 `properties`，移除 `default`，可选参数用可空类型表达，避免 DeepSeek 兼容接口返回 `Required properties must match all properties in the object`。
+- 系统调查规则明确区分异常抛出点与系统根因：必须继续检查至少一个上游调用方和相关契约；缺字段/`KeyError` 优先验证 API 或输入入口的校验责任。
+- 不增加默认 `max_steps`、模型调用预算或工具预算；目标是把原本浪费在重复假设更新上的轮次用于读取尚缺失的业务证据。
+
+### 兼容性、成本与验证
+
+- 原有七个案例、Tool Profile、Runtime 审批、Patch Proposal、隔离验证和 Memory 行为保持兼容；数据集总数由 7 个增加为 15 个，普通全量 Profile 自动选择其中 14 个静态案例，仍会被费用保护拦截，除非显式缩小范围或追加 `--yes`。
+- 新增案例 ID 已同步到兼容 Runtime 工具；普通 `--compare` 仍不会自动启用 Runtime。
+- 193 项离线测试全部通过；新增覆盖初始假设 Schema/执行双门、内联且标点损坏的假设 JSON 无重试接入、当前 Profile 参数目录、越门 Runtime 不触发审批、新证据未归类时拒绝直接报告、普通阶段动作要求与终局无动作归类的分离、低优先级坏动作隔离、`next_action` 精确重复与覆盖范围拒绝、新来源优先选择、长搜索保留靠后命中、大范围读取保留搜索命中窗口、本地修复未转义引号和缺失逗号且不增加模型调用、跨进程 Runtime 恢复后的证据归类，以及假模型 `missing_user_id` 的搜索→调用方→API→Service→confirmed→合法报告全链路。本阶段当前修复完成后尚未再次调用真实模型。
+- 修复前的单次真实 `missing_user_id + full` 报告 `eval-20260917-200444.json` 为 0/1：引用、Evidence 落地和 Claim 覆盖均为 100%，Observation 利用率 85.7%，模型调用 6 次、Token 35,040，但遗漏 `api.py` 取证并因缺少 `API` 根因关键词失败。该失败用于定位初始并行调查、陈旧下一动作与大范围摘要问题，不作为正式 V14 基线。
+- 第一轮控制流修复后的真实报告 `eval-20260917-203621.json` 仍为 0/1：引用、Evidence 落地、Claim 覆盖和 Observation 利用率均为 100%，没有重复调用或降级报告，但 8 个调查轮中有 6 个用于假设更新，其中 3 次因次要候选的工具/参数、重复动作或缺失动作而失败；最终只取得 `run_case.py` 与一次被截断的搜索结果，未读取 `api.py`，模型调用 9 次、工具调用 8 次、Token 42,052。该结果用于定位本轮“初始动作目录、坏动作隔离、来源新颖性排序和搜索摘录”修复，同样不作为正式基线。
+- 第二轮控制流修复后的真实报告 `eval-20260917-205211.json` 已达到根因关键词、引用有效性、Evidence 落地、Claim 覆盖和 Observation 利用率 100%，无重复调查；但最终报告在第 4,041 字符处出现非法 JSON，最后证据归类与总结已用满 10 次模型预算，无法追加模型修复，因 `invalid_synthesis` 和确定性降级报告而判为 0/1。该结果证明调查控制流已基本收敛，并用于定位本轮紧凑输出与本地标点修复，不作为正式基线。
+- 本地 JSON 修复后的真实报告 `eval-20260917-210455.json` 取得 `run_case.py` 和 `api.py` 的四项成功 Observation，且无重复调用；最后一次归类把所有后续动作设为 `null`，却被普通调查阶段的“至少一个开放假设必须可推进”规则拒绝，H1 因而停留在 unverified，medium 报告被假设就绪度校验拒绝并进入降级。该结果用于定位终局动作门复用错误，不作为正式基线。
+- 终局动作门修复后的真实报告 `eval-20260917-211139.json` 已正常以 `stop_reason=completed` 结束，引用、Evidence、Claim 和 Observation 利用率均为 100%，并成功通过一次格式修复；但初始轮返回损坏的内联假设 JSON，额外重试挤掉了第四次外部调查，最终只读取 `run_case.py` 与 `service.py`、未定位 `post_users` 的 API 入口，因缺少 `API` 根因关键词仍为 0/1。该结果用于定位内联假设兼容与内部注释搜索污染，不作为正式基线。
+
+### 兼容性说明
+
+- 直接构造 `DiagnosticHypothesis` 的调用方必须在非空 `next_action` 中补充 `arguments`。该字段只能描述已注册工具参数，不是 Shell、代码执行或任意命令入口。
+
+---
+
 ## V13：Patch Sandbox Verification（隔离补丁验证）
 
 ### 新增

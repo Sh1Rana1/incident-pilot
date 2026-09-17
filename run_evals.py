@@ -1,11 +1,12 @@
-"""运行真实模型的 V12.1.1 Runtime、Memory、成本与稳定性实验。"""
+"""运行真实模型的分组 Evaluation、工具消融、成本与稳定性实验。"""
 
 import argparse
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
 from agent import run_agent_detailed
-from evaluation import load_cases
+from evaluation import EvaluationCase, load_cases
 from experiments import ExperimentRun, run_experiment, save_experiment
 from tool_profiles import STANDARD_EXPERIMENT_PROFILES, TOOL_PROFILES
 
@@ -26,6 +27,35 @@ def enforce_experiment_cost_guard(
             f"超过免确认上限 {MAX_UNCONFIRMED_INVESTIGATIONS}。请先用 --case 缩小范围；"
             "确实需要完整实验时显式追加 --yes。"
         )
+
+
+def select_compatible_cases(
+    cases: Sequence[EvaluationCase],
+    profiles: Sequence[str],
+    *,
+    explicit_case_selection: bool,
+) -> tuple[list[EvaluationCase], list[str]]:
+    """Prevent runtime-only cases from becoming guaranteed failures in static profiles."""
+
+    runtime_cases = [case for case in cases if case.requires_runtime_evidence]
+    if not runtime_cases or all(profile == "full_runtime" for profile in profiles):
+        return list(cases), []
+
+    runtime_case_ids = [case.case_id for case in runtime_cases]
+    if explicit_case_selection:
+        joined = ", ".join(runtime_case_ids)
+        raise SystemExit(
+            f"案例 {joined} 强制要求 Runtime Evidence，不能使用当前 Profile。"
+            "请改用 --profile full_runtime --allow-runtime。"
+        )
+
+    compatible = [case for case in cases if not case.requires_runtime_evidence]
+    if not compatible:
+        raise SystemExit(
+            "所选案例全部要求 Runtime Evidence；"
+            "请改用 --profile full_runtime --allow-runtime。"
+        )
+    return compatible, runtime_case_ids
 
 
 def format_summary(result: ExperimentRun) -> str:
@@ -123,13 +153,19 @@ def format_summary(result: ExperimentRun) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="运行 IncidentPilot V12.1.1 Runtime/Memory 与稳定性实验（会调用真实模型）"
+        description="运行 IncidentPilot 分组 Evaluation、工具消融、成本与稳定性实验（会调用真实模型）"
     )
     parser.add_argument(
         "--case",
         action="append",
         dest="case_ids",
         help="只运行指定 case_id；可以重复提供",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["all", "development", "hidden"],
+        default="all",
+        help="运行全部、开发集或隐藏评测集；默认 all",
     )
     parser.add_argument("--max-steps", type=int, default=8)
     profile_group = parser.add_mutually_exclusive_group()
@@ -174,6 +210,7 @@ def main() -> None:
     cases = load_cases(
         DEFAULT_CASES_DIR,
         set(arguments.case_ids) if arguments.case_ids else None,
+        None if arguments.split == "all" else arguments.split,
     )
     profiles = (
         list(STANDARD_EXPERIMENT_PROFILES)
@@ -183,6 +220,17 @@ def main() -> None:
     if "full_runtime" in profiles and not arguments.allow_runtime:
         raise SystemExit(
             "运行 full_runtime Profile 必须显式添加说明执行权限：追加 --allow-runtime。"
+        )
+    cases, skipped_runtime_cases = select_compatible_cases(
+        cases,
+        profiles,
+        explicit_case_selection=bool(arguments.case_ids),
+    )
+    if skipped_runtime_cases:
+        print(
+            "已跳过需要 Runtime Evidence 的案例："
+            f"{', '.join(skipped_runtime_cases)}。"
+            "它们必须单独使用 --profile full_runtime --allow-runtime 运行。"
         )
     investigation_count = len(profiles) * len(cases) * arguments.runs
     print(

@@ -1,5 +1,6 @@
 """V10 持久化会话测试：使用假模型，不消耗真实 API 额度。"""
 
+import json
 import subprocess
 import sqlite3
 import tempfile
@@ -127,15 +128,63 @@ class SessionStoreTests(unittest.TestCase):
     def test_graph_resumes_after_store_is_closed_and_runtime_runs_once(
         self, create_client_mock, run_mock
     ) -> None:
-        first_client = FakeClient([FakeMessage(tool_calls=[{
-            "id": "call-runtime-v10",
-            "type": "function",
-            "function": {
-                "name": "run_demo_case",
-                "arguments": '{"case_id":"missing_user_id"}',
+        initial_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "预登记案例可以提供 user_id 报错的运行时证据",
+            "status": "unverified",
+            "confidence": 0.3,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "run_demo_case",
+                "arguments": {"case_id": "missing_user_id"},
+                "purpose": "取得受控运行时证据",
+                "supports_if": "复现 KeyError: user_id",
+                "rejects_if": "案例未复现该异常",
             },
-        }])])
-        second_client = FakeClient([FakeMessage(content=VALID_REPORT)])
+        }]})
+        classified_hypotheses = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "预登记案例复现了 user_id 报错",
+            "status": "supported",
+            "confidence": 0.7,
+            "supporting_observation_ids": ["obs-001"],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "arguments": {"path": "demo_app/app/api.py"},
+                "purpose": "继续核对 API 调用边界",
+                "supports_if": "API 直接透传 payload",
+                "rejects_if": "API 已校验必填字段",
+            },
+        }]})
+        first_client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-hypothesis-v10", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": initial_hypotheses,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-runtime-v10",
+                "type": "function",
+                "function": {
+                    "name": "run_demo_case",
+                    "arguments": '{"case_id":"missing_user_id"}',
+                },
+            }]),
+        ])
+        second_client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-classify-v10", "type": "function",
+                "function": {
+                    "name": "update_hypotheses",
+                    "arguments": classified_hypotheses,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
         create_client_mock.side_effect = [
             (first_client, runtime_config()),
             (second_client, runtime_config()),

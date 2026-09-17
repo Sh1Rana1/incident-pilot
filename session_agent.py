@@ -106,6 +106,7 @@ def _initial_state(
         "context_compaction_count": 0,
         "confirmed_at_tool_call_count": None,
         "hypothesis_update_required": False,
+        "final_classification_used": False,
         "runtime_tools_enabled": runtime_tools_enabled,
         "runtime_execution_preapproved": False,
         "runtime_execution_decision": None,

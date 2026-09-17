@@ -1,0 +1,9 @@
+{
+  "case_id": "pagination_off_by_one",
+  "split": "hidden",
+  "question": "记录聚合时报 pagination incomplete: expected 6, got 4，total_pages=3 且 page_size=2。请找出遗漏记录的原因。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["range", "最后一页", "off-by-one"],
+  "evidence_files": ["demo_app/app/pagination.py"],
+  "relevant_docs": ["demo_app/docs/data-contracts.md"]
+}

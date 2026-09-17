@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 66, in run_case
+    charge_order(PaymentGateway(), "order-001")
+  File "demo_app/app/retry_policy.py", line 9, in charge_order
+    gateway.charge(order_id, amount=500)
+  File "demo_app/fixtures/payment_gateway.py", line 10, in charge
+    raise RuntimeError(f"duplicate charge: {order_id}")
+RuntimeError: duplicate charge: order-001

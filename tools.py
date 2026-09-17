@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from models import StrictModel, ToolResult
 from registry import registry
@@ -19,10 +19,13 @@ IGNORED_DIRS = {
     "node_modules", "build", "dist", ".pytest_cache", "fixtures",
 }
 INTERNAL_ONLY_DIRS = {
-    ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures"
+    ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures",
 }
+INTERNAL_ONLY_PATH_PREFIXES = {("demo_app", "checks")}
 INTERNAL_ONLY_FILES = {
     "harness.json",
+    "harness.py",
+    "runtime_tools.py",
     "evaluation.py",
     "experiments.py",
     "run_evals.py",
@@ -42,6 +45,26 @@ SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}
 
 class ReadFileArgs(StrictModel):
     path: str = Field(description="项目根目录下的相对文件路径")
+    start_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选的起始行号（从 1 开始）；已知搜索命中行时应优先使用",
+    )
+    end_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选的结束行号（包含该行）；必须不小于 start_line",
+    )
+
+    @model_validator(mode="after")
+    def validate_line_range(self):
+        if (
+            self.start_line is not None
+            and self.end_line is not None
+            and self.end_line < self.start_line
+        ):
+            raise ValueError("end_line 不能小于 start_line")
+        return self
 
 
 class SearchCodeArgs(StrictModel):
@@ -60,15 +83,33 @@ def _safe_path(relative_path: str) -> Path:
     return path
 
 
+def _is_test_file(path: Path) -> bool:
+    return path.suffix.lower() == ".py" and path.name.startswith("test_")
+
+
+def _has_internal_prefix(path: Path) -> bool:
+    parts = path.relative_to(PROJECT_ROOT).parts
+    return any(parts[:len(prefix)] == prefix for prefix in INTERNAL_ONLY_PATH_PREFIXES)
+
+
 def _is_ignored(path: Path) -> bool:
-    return path.name in INTERNAL_ONLY_FILES or any(
-        part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts
+    return (
+        _is_test_file(path)
+        or _has_internal_prefix(path)
+        or path.name in INTERNAL_ONLY_FILES
+        or any(part in IGNORED_DIRS for part in path.relative_to(PROJECT_ROOT).parts)
     )
 
 
 def _is_internal_only(path: Path) -> bool:
-    return path.name in INTERNAL_ONLY_FILES or any(
-        part in INTERNAL_ONLY_DIRS for part in path.relative_to(PROJECT_ROOT).parts
+    return (
+        _is_test_file(path)
+        or _has_internal_prefix(path)
+        or path.name in INTERNAL_ONLY_FILES
+        or any(
+            part in INTERNAL_ONLY_DIRS
+            for part in path.relative_to(PROJECT_ROOT).parts
+        )
     )
 
 
@@ -104,14 +145,25 @@ def read_file(arguments: ReadFileArgs) -> ToolResult:
     except UnicodeDecodeError:
         return ToolResult.failure("无法读取二进制或非 UTF-8 文件", path=arguments.path)
 
-    truncated = len(content) > MAX_FILE_CHARS
+    all_lines = content.splitlines()
+    start_line = arguments.start_line or 1
+    end_line = arguments.end_line or len(all_lines)
+    selected_lines = all_lines[start_line - 1:end_line]
+    selected_content = "\n".join(selected_lines)
+    truncated = len(selected_content) > MAX_FILE_CHARS
     if truncated:
-        content = content[:MAX_FILE_CHARS]
-    lines = [{"line": number, "content": line} for number, line in enumerate(content.splitlines(), 1)]
+        selected_content = selected_content[:MAX_FILE_CHARS]
+        selected_lines = selected_content.splitlines()
+    lines = [
+        {"line": start_line + offset, "content": line}
+        for offset, line in enumerate(selected_lines)
+    ]
     return ToolResult.success(
         {"path": arguments.path, "lines": lines},
         truncated=truncated,
-        returned_characters=len(content),
+        returned_characters=len(selected_content),
+        requested_start_line=arguments.start_line,
+        requested_end_line=arguments.end_line,
     )
 
 

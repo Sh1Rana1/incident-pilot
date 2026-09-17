@@ -1,4 +1,4 @@
-"""后台任务处理。异常路径故意没有释放连接。"""
+"""后台任务处理。"""
 
 from demo_app.app.pool import ConnectionPool
 

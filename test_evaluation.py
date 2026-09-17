@@ -305,6 +305,15 @@ class ScoringTests(unittest.TestCase):
             "obs-001",
         )
 
+    def test_benchmark_has_five_development_and_ten_hidden_cases(self) -> None:
+        directory = ROOT / "demo_app" / "evals"
+        development = load_cases(directory, split="development")
+        hidden = load_cases(directory, split="hidden")
+
+        self.assertEqual(len(development), 5)
+        self.assertEqual(len(hidden), 10)
+        self.assertEqual(len({case.case_id for case in development + hidden}), 15)
+
 
 if __name__ == "__main__":
     unittest.main()

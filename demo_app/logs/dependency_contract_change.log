@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 86, in run_case
+    notify_user("user-001")
+  File "demo_app/app/notification_client.py", line 7, in notify_user
+    send_message(to=user_id, message="job completed")
+TypeError: send_message() got an unexpected keyword argument 'to'

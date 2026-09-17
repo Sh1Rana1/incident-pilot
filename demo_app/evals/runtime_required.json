@@ -1,5 +1,6 @@
 {
   "case_id": "runtime_required",
+  "split": "development",
   "question": "请先调查并实际复现 documentation_required 预登记案例，再解释 HTTP 422: timeout_policy_violation 的准确根因，以及 timeout_seconds 应配置为多少。最终报告必须引用本次真实运行的 Runtime Evidence。",
   "expected_exception": "RuntimeError",
   "root_cause_keywords": ["timeout_seconds", "30 秒", "10 秒"],

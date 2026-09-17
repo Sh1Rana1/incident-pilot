@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 82, in run_case
+    import_then_continue(connection)
+  File "demo_app/app/transactions.py", line 20, in import_then_continue
+    connection.execute("BEGIN")
+sqlite3.OperationalError: cannot start a transaction within a transaction

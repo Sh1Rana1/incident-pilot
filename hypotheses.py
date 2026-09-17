@@ -1,4 +1,4 @@
-"""V8.1.1 假设控制工具与确定性证据充分性判断。"""
+"""V14 假设控制、下一动作信息增益与确定性证据充分性判断。"""
 
 import json
 from typing import Any
@@ -12,9 +12,82 @@ from models import (
     ToolObservation,
     ToolResult,
 )
+from registry import registry
 
 
 HYPOTHESIS_TOOL_NAME = "update_hypotheses"
+
+
+def _normalized_path(path: str) -> str:
+    return path.replace("\\", "/").lstrip("./").lower()
+
+
+def _redundant_next_action(
+    hypothesis: DiagnosticHypothesis,
+    observations: list[ToolObservation],
+) -> str | None:
+    """返回已被成功 Observation 覆盖的 next_action 说明。"""
+    action = hypothesis.next_action
+    if action is None:
+        return None
+    expected_arguments, error = registry.normalize_arguments(
+        action.tool_name,
+        action.arguments,
+    )
+    if error or expected_arguments is None:
+        return None
+
+    successful = [
+        item for item in observations if item.ok and not item.repeated
+    ]
+    for observation in successful:
+        if observation.tool_name != action.tool_name:
+            continue
+        actual_arguments, actual_error = registry.normalize_arguments(
+            observation.tool_name,
+            observation.arguments,
+        )
+        if not actual_error and actual_arguments == expected_arguments:
+            return f"已由 {observation.observation_id} 成功执行"
+
+    if action.tool_name != "read_file":
+        return None
+    path = _normalized_path(str(expected_arguments.get("path", "")))
+    requested_start = expected_arguments.get("start_line") or 1
+    requested_end = expected_arguments.get("end_line")
+    if not path or requested_end is None:
+        return None
+
+    intervals: list[tuple[int, int, str]] = []
+    for observation in successful:
+        if observation.tool_name != "read_file":
+            continue
+        for source in observation.sources:
+            if (
+                _normalized_path(source.file) == path
+                and source.line_start is not None
+                and source.line_end is not None
+            ):
+                intervals.append((
+                    source.line_start,
+                    source.line_end,
+                    observation.observation_id,
+                ))
+    covered_until = requested_start - 1
+    covering_ids: list[str] = []
+    for start, end, observation_id in sorted(intervals, key=lambda item: item[0]):
+        if end < requested_start:
+            continue
+        if start > covered_until + 1:
+            break
+        if end > covered_until:
+            covered_until = end
+            covering_ids.append(observation_id)
+        if covered_until >= requested_end:
+            return "读取范围已由成功 Observation 覆盖: " + ",".join(
+                dict.fromkeys(covering_ids)
+            )
+    return None
 
 
 def hypothesis_tool_schema(strict: bool = False) -> dict[str, Any]:
@@ -36,6 +109,9 @@ def hypothesis_tool_schema(strict: bool = False) -> dict[str, Any]:
 def parse_hypothesis_update(
     arguments_json: str,
     observations: list[ToolObservation],
+    allowed_tools: frozenset[str] | set[str] | None = None,
+    *,
+    require_next_action: bool = True,
 ) -> tuple[list[DiagnosticHypothesis] | None, str]:
     """校验假设 ID、Observation 引用和状态，返回标准工具结果 JSON。"""
     try:
@@ -55,6 +131,8 @@ def parse_hypothesis_update(
 
     observation_map = {item.observation_id: item for item in observations}
     errors: list[str] = []
+    action_warnings: list[str] = []
+    sanitized_hypotheses: list[DiagnosticHypothesis] = []
     for hypothesis in update.hypotheses:
         referenced = (
             hypothesis.supporting_observation_ids
@@ -78,24 +156,58 @@ def parse_hypothesis_update(
             errors.append(f"{hypothesis.hypothesis_id} 的 {hypothesis.status} 状态缺少支持证据")
         if hypothesis.status == "rejected" and not hypothesis.contradicting_observation_ids:
             errors.append(f"{hypothesis.hypothesis_id} 的 rejected 状态缺少反证")
-        if hypothesis.status in {"unverified", "supported"} and hypothesis.next_action is None:
+        sanitized = hypothesis
+        if not require_next_action:
+            # 终局归类之后图会立即总结，不会再开放外部工具。此时保留或
+            # 强制要求 next_action 都没有意义，也不应让陈旧动作阻断证据归类。
+            sanitized = hypothesis.model_copy(update={"next_action": None})
+        elif hypothesis.next_action is not None:
+            action_error = registry.validate_arguments(
+                hypothesis.next_action.tool_name,
+                hypothesis.next_action.arguments,
+                allowed_tools=allowed_tools,
+            )
+            if action_error:
+                action_warnings.append(
+                    f"{hypothesis.hypothesis_id} 的 next_action 无效: {action_error}"
+                )
+                sanitized = hypothesis.model_copy(update={"next_action": None})
+            else:
+                redundant = _redundant_next_action(hypothesis, observations)
+                if redundant:
+                    action_warnings.append(
+                        f"{hypothesis.hypothesis_id} 的 next_action 没有新增信息: "
+                        f"{redundant}；请规划尚未执行且能区分假设的动作"
+                    )
+                    sanitized = hypothesis.model_copy(update={"next_action": None})
+        sanitized_hypotheses.append(sanitized)
+
+    if require_next_action:
+        open_hypotheses = [
+            item for item in sanitized_hypotheses
+            if item.status in {"unverified", "supported"}
+        ]
+        if open_hypotheses and not any(
+            item.next_action is not None for item in open_hypotheses
+        ):
             errors.append(
-                f"{hypothesis.hypothesis_id} 的 {hypothesis.status} 状态缺少结构化 next_action"
+                "完整假设集合至少需要一个 unverified/supported 假设提供结构化 next_action"
             )
     if errors:
         return None, ToolResult.failure(
-            "；".join(errors),
+            "；".join(action_warnings + errors),
             tool=HYPOTHESIS_TOOL_NAME,
         ).model_dump_json()
 
-    return update.hypotheses, ToolResult.success(
+    return sanitized_hypotheses, ToolResult.success(
         {
-            "hypothesis_count": len(update.hypotheses),
+            "hypothesis_count": len(sanitized_hypotheses),
             "confirmed": [
                 item.hypothesis_id
-                for item in update.hypotheses
+                for item in sanitized_hypotheses
                 if item.status == "confirmed"
             ],
+            "ignored_next_actions": action_warnings,
         },
         tool=HYPOTHESIS_TOOL_NAME,
     ).model_dump_json()

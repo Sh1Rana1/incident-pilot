@@ -1,0 +1,9 @@
+{
+  "case_id": "retry_non_idempotent",
+  "split": "hidden",
+  "question": "支付网关第一次请求超时后，重试出现 RuntimeError: duplicate charge: order-001。请判断为什么超时重试导致了重复副作用。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["幂等", "TimeoutError", "重试"],
+  "evidence_files": ["demo_app/app/retry_policy.py"],
+  "relevant_docs": ["demo_app/docs/reliability.md"]
+}

@@ -1,8 +1,9 @@
 {
   "case_id": "connection_leak",
+  "split": "development",
   "question": "连续处理无效任务后出现 connection pool exhausted，请找出根因。",
   "expected_exception": "RuntimeError",
   "root_cause_keywords": ["release", "异常", "泄漏"],
   "evidence_files": ["demo_app/app/worker.py", "demo_app/app/pool.py"],
-  "relevant_docs": ["demo_app/docs/runbook.md", "demo_app/docs/incidents/INC-003-connection-leak.md"]
+  "relevant_docs": ["demo_app/docs/runbook.md"]
 }

@@ -1,4 +1,4 @@
-"""V12.1.1 受限运行时基础：预登记 Demo、共享解析器与持久幂等账本。"""
+"""受限运行时基础：预登记 Demo、共享解析器与持久幂等账本。"""
 
 import os
 import re
@@ -24,6 +24,14 @@ DemoCaseId = Literal[
     "schema_mismatch",
     "connection_leak",
     "documentation_required",
+    "async_missing_await",
+    "retry_non_idempotent",
+    "timezone_mismatch",
+    "cache_key_version",
+    "pagination_off_by_one",
+    "config_env_rename",
+    "transaction_rollback",
+    "dependency_contract_change",
 ]
 _RUNTIME_TIMEOUT_SECONDS: ContextVar[int] = ContextVar(
     "incident_pilot_runtime_timeout_seconds",

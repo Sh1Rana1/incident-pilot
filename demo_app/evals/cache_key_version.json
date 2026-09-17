@@ -1,0 +1,9 @@
+{
+  "case_id": "cache_key_version",
+  "split": "hidden",
+  "question": "资料写入缓存后读取出现 KeyError: 'profile:v1:user-001'，请定位读写链路中的不一致。",
+  "expected_exception": "KeyError",
+  "root_cause_keywords": ["profile:v1", "profile:v2", "缓存"],
+  "evidence_files": ["demo_app/app/cache_store.py"],
+  "relevant_docs": ["demo_app/docs/data-contracts.md"]
+}

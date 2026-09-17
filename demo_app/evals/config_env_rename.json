@@ -1,0 +1,9 @@
+{
+  "case_id": "config_env_rename",
+  "split": "hidden",
+  "question": "部署已注入 SERVICE_TIMEOUT_MS=1200，但应用仍报 timeout configuration mismatch: loaded 5000, expected 1200。请定位配置加载错误。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["SERVICE_TIMEOUT_MS", "REQUEST_TIMEOUT_MS", "5000"],
+  "evidence_files": ["demo_app/app/settings.py"],
+  "relevant_docs": ["demo_app/docs/client-migrations.md"]
+}

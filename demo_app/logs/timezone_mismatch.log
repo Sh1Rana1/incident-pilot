@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 68, in run_case
+    completed_within_sla(completed_at, deadline)
+  File "demo_app/app/time_window.py", line 9, in completed_within_sla
+    return completed <= due
+TypeError: can't compare offset-naive and offset-aware datetimes

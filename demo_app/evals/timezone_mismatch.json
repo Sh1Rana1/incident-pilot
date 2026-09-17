@@ -1,0 +1,9 @@
+{
+  "case_id": "timezone_mismatch",
+  "split": "hidden",
+  "question": "SLA 判断出现 TypeError: can't compare offset-naive and offset-aware datetimes，请找出两个时间值为何不兼容。",
+  "expected_exception": "TypeError",
+  "root_cause_keywords": ["timezone-aware", "naive", "deadline"],
+  "evidence_files": ["demo_app/app/time_window.py"],
+  "relevant_docs": ["demo_app/docs/runtime-contracts.md"]
+}

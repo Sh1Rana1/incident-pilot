@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "demo_app/run_case.py", line 74, in run_case
+    read_profile(cache, "user-001")
+  File "demo_app/app/cache_store.py", line 9, in read_profile
+    return cache[f"profile:v1:{user_id}"]
+KeyError: 'profile:v1:user-001'

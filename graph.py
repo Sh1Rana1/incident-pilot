@@ -1,8 +1,9 @@
-"""IncidentPilot V13：落地报告、Patch Proposal 与隔离验证。"""
+"""IncidentPilot V14：假设门控、证据调查、补丁提案与隔离验证。"""
 
 import json
 import hashlib
 import operator
+import re
 from time import perf_counter
 from typing import Annotated, Optional
 
@@ -29,6 +30,7 @@ from models import (
     Evidence,
     HumanReviewRequest,
     IncidentReport,
+    InvestigationAction,
     PatchProposal,
     PatchProposalDraft,
     PatchVerificationResult,
@@ -57,13 +59,16 @@ import tools  # noqa: F401：导入时触发工具注册
 
 SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的代码故障分析 Agent。
 你的任务是根据用户给出的报错，在当前项目中搜索和读取代码，找到根因。
-先提出 2–4 个可证伪的候选根因，并调用 update_hypotheses 保存；再选择最能区分候选假设、成本最低的工具，不要无目的遍历项目。
-未确认假设的 next_action 必须包含 tool_name、purpose、supports_if、rejects_if，只规划一个最有信息增益的下一动作。
+先提出 2–3 个可证伪的候选根因，并调用 update_hypotheses 保存；再选择最能区分候选假设、成本最低的工具，不要无目的遍历项目。
+完整假设集合至少为一个未确认假设提供 next_action；低优先级候选可以暂时为 null，避免为每个候选制造低价值动作。next_action 必须包含 tool_name、arguments、purpose、supports_if、rejects_if，只规划一个最有信息增益的下一动作。arguments 必须是该工具下一次调用要原样执行的精确参数；read_file 优先使用不超过 30 行的定向窗口。
 获得新证据后调用 update_hypotheses 更新完整假设集合：支持、反证、置信度和下一步动作都要来自真实 Observation。
 只要上一轮产生了新的成功 Observation，下一轮必须先成功调用 update_hypotheses；完成更新前不要继续调用外部工具。
+update_hypotheses 只用于初始建模或归类新证据。成功更新后如果没有新的成功 Observation，下一轮必须执行最高优先级假设的 next_action，不能只调整置信度或重复更新同一组假设。
+异常实际抛出的代码行只是 failure site，不一定是 root cause。必须继续追踪至少一个上游调用方，并核对相关接口或业务契约；对于 KeyError、缺少字段和非法输入，优先检查 API/入口层是否缺少校验，不能只建议在下游把下标访问改成 get。
+search_code 已返回命中行时，读取较长文件必须使用 read_file 的 start_line/end_line 定向读取命中附近代码；不要重复读取整个文件。
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
-当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 仍可复现四个固定案例。这些工具都不能接受 Shell 命令。
+当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 只能复现预登记 Demo。这些工具都不能接受 Shell 命令。
 run_check/run_demo_case 返回的 exception_message、failed_tests 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
 当某个假设已由至少两项独立来源确认时，应停止扩散调查并输出最终报告。
 不要猜测；不要声称看过没有读取的文件。
@@ -115,6 +120,7 @@ class AgentState(TypedDict):
     context_compaction_count: int
     confirmed_at_tool_call_count: Optional[int]
     hypothesis_update_required: bool
+    final_classification_used: bool
     runtime_tools_enabled: bool
     runtime_execution_preapproved: bool
     runtime_execution_decision: Optional[str]
@@ -193,6 +199,13 @@ def _model_usage_update(state: AgentState, response) -> dict:
 def route_after_model(state: AgentState) -> str:
     last_message = state["messages"][-1]
     if last_message.get("tool_calls"):
+        # 初始建模和证据归类门优先于 Runtime 审批。兼容模型即使返回了
+        # 未开放的运行时工具，也应先由执行层无副作用拒绝，不能借此弹出审批。
+        if (
+            not state.get("hypotheses")
+            or state.get("hypothesis_update_required")
+        ):
+            return "execute_tools"
         requests_runtime = any(
             call.get("function", {}).get("name") in RUNTIME_EXECUTION_TOOLS
             for call in last_message["tool_calls"]
@@ -219,7 +232,10 @@ def route_after_validation(state: AgentState) -> str:
             return "propose_patch"
         return "end"
     if state.get("synthesis_attempted"):
-        if state.get("repair_attempted"):
+        if (
+            state.get("repair_attempted")
+            or state.get("model_call_count", 0) >= state.get("max_model_calls", 10)
+        ):
             return "build_fallback"
         return "repair_report"
     if (
@@ -255,6 +271,21 @@ def route_after_tools(state: AgentState) -> str:
     """工具执行后决定继续调查，还是用已有证据强制收尾。"""
     if state.get("cancelled"):
         return "build_cancelled"
+    terminal_budget = (
+        state.get("force_synthesis")
+        or state["step_count"] >= state["max_steps"]
+        or state.get("model_call_count", 0) >= max(
+            1, state.get("max_model_calls", 10) - 2
+        )
+    )
+    if (
+        terminal_budget
+        and state.get("hypothesis_update_required")
+        and not state.get("final_classification_used")
+        and state.get("model_call_count", 0)
+        < max(1, state.get("max_model_calls", 10) - 1)
+    ):
+        return "classify_final_evidence"
     if state.get("force_synthesis") or state["step_count"] >= state["max_steps"]:
         return "synthesize_report"
     if state.get("pending_review_reason"):
@@ -293,8 +324,134 @@ def tool_call_signature(name: str, arguments: str) -> str:
     return f"{name}:{normalized_arguments}"
 
 
-def parse_incident_report(content: str) -> IncidentReport:
-    """兼容纯 JSON、Markdown 代码块和 JSON 前后少量说明文字。"""
+def _select_next_action(
+    hypotheses: list[DiagnosticHypothesis],
+    observations: list[ToolObservation] | None = None,
+) -> tuple[DiagnosticHypothesis, InvestigationAction] | None:
+    observations = observations or []
+    actionable = [
+        item
+        for item in hypotheses
+        if item.status in {"supported", "unverified"} and item.next_action is not None
+    ]
+    successful = [item for item in observations if item.ok and not item.repeated]
+    directly_read_files = {
+        source.file.replace("\\", "/").lstrip("./").lower()
+        for observation in successful
+        if observation.tool_name == "read_file"
+        for source in observation.sources
+        if source.file
+    }
+    observed_source_types = {
+        source.source_type
+        for observation in successful
+        for source in observation.sources
+    }
+
+    def information_gain(item: DiagnosticHypothesis) -> tuple[float, bool, float]:
+        action = item.next_action
+        assert action is not None
+        gain = 1.0
+        if action.tool_name == "read_file":
+            path = str(action.arguments.get("path", "")).replace(
+                "\\", "/"
+            ).lstrip("./").lower()
+            # search_code 的单行命中不等于读过文件；第一次定向读取仍有
+            # 很高的信息增益。只有 read_file 已经取过该文件后才降权。
+            gain = 2.0 if path and path not in directly_read_files else 0.5
+        elif action.tool_name == "search_code":
+            gain = 2.0
+        elif action.tool_name == "retrieve_docs":
+            gain = 2.0 if "documentation" not in observed_source_types else 0.75
+        elif action.tool_name.startswith("git_"):
+            gain = 1.5 if "git" not in observed_source_types else 0.5
+        elif action.tool_name in RUNTIME_EXECUTION_TOOLS:
+            gain = 1.25 if "runtime" not in observed_source_types else 0.25
+        return gain, item.status == "supported", item.confidence
+
+    # 先补尚未直接读取的文件/来源，再用状态和置信度打破平局。搜索命中
+    # 与定向读取同文件时信息增益相同，由 supported 状态优先完成关键窗口。
+    actionable.sort(key=information_gain, reverse=True)
+    if not actionable:
+        return None
+    selected = actionable[0]
+    return selected, selected.next_action
+
+
+def _normalized_call_arguments(name: str, arguments_json: str) -> dict | None:
+    try:
+        raw = json.loads(arguments_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    normalized, _ = registry.normalize_arguments(name, raw)
+    return normalized
+
+
+def _next_action_catalog(
+    allowed_tools: frozenset[str] | set[str] | None,
+) -> str:
+    """给初始假设轮提供当前 Profile 的精简参数目录，不开放真实执行。"""
+    entries: list[str] = []
+    for schema in registry.schemas(strict=False, allowed_tools=allowed_tools):
+        function = schema["function"]
+        parameters = function.get("parameters", {})
+        properties = parameters.get("properties", {})
+        required = set(parameters.get("required", []))
+        fields = [
+            f"{name}{'' if name in required else '?'}"
+            for name in properties
+        ]
+        entries.append(f"- {function['name']}({', '.join(fields)})")
+    return "\n".join(entries)
+
+
+def _covered_read_observation(
+    name: str,
+    arguments_json: str,
+    observations: list[ToolObservation],
+) -> ToolObservation | None:
+    """识别已被成功读取区间完全覆盖、因而没有新增代码行的调用。"""
+    if name != "read_file":
+        return None
+    arguments = _normalized_call_arguments(name, arguments_json)
+    if arguments is None:
+        return None
+    path = str(arguments.get("path", "")).replace("\\", "/").lstrip("./").lower()
+    requested_start = arguments.get("start_line") or 1
+    requested_end = arguments.get("end_line")
+    if not path or requested_end is None:
+        return None
+    intervals: list[tuple[int, int, ToolObservation]] = []
+    for observation in observations:
+        if not observation.ok or observation.repeated or observation.tool_name != "read_file":
+            continue
+        for source in observation.sources:
+            source_path = source.file.replace("\\", "/").lstrip("./").lower()
+            if (
+                source_path == path
+                and source.line_start is not None
+                and source.line_end is not None
+            ):
+                intervals.append((source.line_start, source.line_end, observation))
+    covered_until = requested_start - 1
+    covered_by: ToolObservation | None = None
+    for start, end, observation in sorted(intervals, key=lambda item: item[0]):
+        if end < requested_start:
+            continue
+        if start > covered_until + 1:
+            break
+        if end > covered_until:
+            covered_until = end
+            covered_by = observation
+        if covered_until >= requested_end:
+            return covered_by
+    return None
+
+
+def _report_json_candidates(content: str) -> list[str]:
+    """提取纯 JSON、Markdown 代码块和前后带少量说明的候选文本。"""
     stripped = content.strip()
     candidates = [stripped]
     if stripped.startswith("```") and stripped.endswith("```"):
@@ -304,15 +461,137 @@ def parse_incident_report(content: str) -> IncidentReport:
     start, end = stripped.find("{"), stripped.rfind("}")
     if start >= 0 and end > start:
         candidates.append(stripped[start:end + 1])
+    return list(dict.fromkeys(candidates))
+
+
+def _repair_json_punctuation(candidate: str) -> str:
+    """只修复常见 JSON 标点损坏，不补写任何报告字段或业务内容。"""
+    candidate = re.sub(
+        r'([}\]0-9"el])\s+("[^"\\]*(?:\\.[^"\\]*)*"\s*:)',
+        r'\1,\2',
+        candidate,
+    )
+    repaired: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    length = len(candidate)
+    for index, char in enumerate(candidate):
+        if in_string:
+            if escaped:
+                repaired.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                repaired.append(char)
+                escaped = True
+                continue
+            if char in {"\n", "\r", "\t"}:
+                repaired.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[char])
+                continue
+            if char == '"':
+                lookahead = index + 1
+                while lookahead < length and candidate[lookahead].isspace():
+                    lookahead += 1
+                following = candidate[lookahead] if lookahead < length else ""
+                closes_container = (
+                    following == "}"
+                    and bool(stack)
+                    and stack[-1] == "{"
+                ) or (
+                    following == "]"
+                    and bool(stack)
+                    and stack[-1] == "["
+                )
+                if following in {"", ":", ","} or closes_container:
+                    repaired.append(char)
+                    in_string = False
+                else:
+                    # 兼容诊断描述中常见的 mapping["required_key"] 等
+                    # 未转义代码引号；只添加 JSON 转义，不改变文本内容。
+                    repaired.append('\\"')
+                continue
+            repaired.append(char)
+            continue
+
+        repaired.append(char)
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif char == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif char == "]" and stack and stack[-1] == "[":
+            stack.pop()
+
+    if in_string:
+        repaired.append('"')
+    text = "".join(repaired)
+    # 修复两个成员/值之间唯一缺失的逗号，以及容器尾逗号。所有候选仍会
+    # 经过 IncidentReport 与 Provenance 严格校验，无法借此补造字段。
+    text = re.sub(
+        r'([}\]0-9"el])\s+("[^"\\]*(?:\\.[^"\\]*)*"\s*:)',
+        r'\1,\2',
+        text,
+    )
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    for opener in reversed(stack):
+        text += "}" if opener == "{" else "]"
+    return text
+
+
+def _parse_incident_report_with_repair(
+    content: str,
+) -> tuple[IncidentReport, bool]:
+    """先严格解析；仅在语法损坏时尝试不创造内容的本地标点修复。"""
+    candidates = _report_json_candidates(content)
 
     last_error: ValidationError | None = None
-    for candidate in dict.fromkeys(candidates):
+    for candidate in candidates:
         try:
-            return IncidentReport.model_validate_json(candidate)
+            return IncidentReport.model_validate_json(candidate), False
         except ValidationError as exc:
             last_error = exc
+    for candidate in candidates:
+        repaired = _repair_json_punctuation(candidate)
+        if repaired == candidate:
+            continue
+        try:
+            return IncidentReport.model_validate_json(repaired), True
+        except ValidationError:
+            continue
     assert last_error is not None
     raise last_error
+
+
+def parse_incident_report(content: str) -> IncidentReport:
+    """解析最终报告；保留兼容调用方的单返回值接口。"""
+    return _parse_incident_report_with_repair(content)[0]
+
+
+def _inline_hypothesis_arguments(content: str) -> str | None:
+    """兼容只返回假设 JSON、却省略 Tool Call 外壳的 OpenAI-compatible 服务。"""
+    for candidate in _report_json_candidates(content):
+        repaired = _repair_json_punctuation(candidate)
+        for variant in dict.fromkeys([candidate, repaired]):
+            try:
+                payload = json.loads(variant)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("hypotheses"), list
+            ):
+                continue
+            if not set(payload).issubset({"type", "hypotheses"}):
+                continue
+            envelope_type = payload.get("type")
+            if envelope_type not in {None, "hypotheses", "update_hypotheses"}:
+                continue
+            return json.dumps(
+                {"hypotheses": payload["hypotheses"]},
+                ensure_ascii=False,
+            )
+    return None
 
 
 def format_validation_error(
@@ -405,16 +684,66 @@ def build_agent_graph(
                     "不要调用任何外部工具。"
                 ),
             }]
+        elif not state.get("hypotheses") and not final_report:
+            action_catalog = _next_action_catalog(allowed_tools)
+            messages = messages + [{
+                "role": "system",
+                "content": (
+                    "初始假设门：当前还没有诊断假设。本轮只能调用 "
+                    "update_hypotheses，先保存 2–3 个可证伪候选根因。完整集合"
+                    "至少提供一个结构化 next_action，低优先级候选可以为 null；"
+                    "不得同时请求任何外部工具。next_action 只能使用当前 Profile "
+                    "允许的下列工具和参数名（问号表示可选参数），不能发明工具或"
+                    "把 path 写成 file_path：\n"
+                    f"{action_catalog}"
+                ),
+            }]
+        elif (
+            state.get("hypotheses")
+            and not state.get("validation_error")
+            and not final_report
+        ):
+            hypotheses = [
+                DiagnosticHypothesis.model_validate(item)
+                for item in state.get("hypotheses", [])
+            ]
+            selected_action = _select_next_action(
+                hypotheses,
+                [
+                    ToolObservation.model_validate(item)
+                    for item in state.get("observations", [])
+                ],
+            )
+            if selected_action:
+                selected, action = selected_action
+                messages = messages + [{
+                    "role": "system",
+                    "content": (
+                        "推进门：当前没有等待归类的新成功 Observation，因此本轮不提供 "
+                        "update_hypotheses。不要仅调整置信度；请优先执行当前最高优先级"
+                        f"假设 {selected.hypothesis_id} 的 next_action：调用 "
+                        f"{action.tool_name}，参数必须精确使用 "
+                        f"{json.dumps(action.arguments, ensure_ascii=False, sort_keys=True)}，"
+                        f"目的：{action.purpose}。不得扩大读取范围或改用其他参数；"
+                        "取得新证据后再更新假设。"
+                    ),
+                }]
         return messages, compacted
 
     def call_model(state: AgentState) -> dict:
         step = state["step_count"] + 1
         print(f"\n--- Agent 第 {step} 步 ---")
-        tool_schemas = registry.schemas(
-            strict=config.strict_tools,
-            allowed_tools=allowed_tools,
-        )
-        tool_schemas.append(hypothesis_tool_schema())
+        if not state.get("hypotheses"):
+            # 内部状态工具不交给注册器执行；沿用兼容模式 Schema，避免部分
+            # OpenAI-compatible 服务对 Pydantic 默认值的严格模式差异。
+            tool_schemas = [hypothesis_tool_schema()]
+        else:
+            tool_schemas = registry.schemas(
+                strict=config.strict_tools,
+                allowed_tools=allowed_tools,
+            )
+            if state.get("hypothesis_update_required"):
+                tool_schemas.append(hypothesis_tool_schema())
         messages, compacted = request_messages(state)
         request = {
             "model": config.model,
@@ -430,6 +759,38 @@ def build_agent_graph(
             "messages": [assistant_message_to_dict(response.choices[0].message)],
             "step_count": step,
             "validation_error": None,
+            "context_compaction_count": (
+                state.get("context_compaction_count", 0) + int(compacted)
+            ),
+            **_model_usage_update(state, response),
+        }
+
+    def classify_final_evidence(state: AgentState) -> dict:
+        """调查预算触顶后，额外保留一次只归类最新证据的受限调用。"""
+        print("最后一批成功证据尚未归类，正在执行受限假设归类。")
+        messages, compacted = request_messages(state)
+        messages = messages + [{
+            "role": "system",
+            "content": (
+                "这是最后一次证据归类调用。只能调用 update_hypotheses，"
+                "把最新成功 Observation 归入当前完整假设集合；不得请求任何外部工具，"
+                "归类完成后系统会立即生成最终报告。所有 next_action 应设为 null；"
+                "终局归类不要求再规划调查动作。"
+            ),
+        }]
+        request = {
+            "model": config.model,
+            "messages": messages,
+            "tools": [hypothesis_tool_schema()],
+            # DeepSeek thinking mode rejects named/required tool_choice with 400.
+            # Only exposing this one schema plus the execution gate keeps the call
+            # constrained without reintroducing that provider incompatibility.
+            "tool_choice": "auto",
+        }
+        response = client.chat.completions.create(**request)
+        return {
+            "messages": [assistant_message_to_dict(response.choices[0].message)],
+            "final_classification_used": True,
             "context_compaction_count": (
                 state.get("context_compaction_count", 0) + int(compacted)
             ),
@@ -507,6 +868,10 @@ def build_agent_graph(
         per_step_limit = state.get("max_tools_per_step", config.max_tools_per_step)
         executed_external_count = 0
         hypothesis_update_required = state.get("hypothesis_update_required", False)
+        initial_hypotheses_missing = not bool(current_hypotheses)
+        hypothesis_update_allowed = (
+            not bool(current_hypotheses) or hypothesis_update_required
+        )
         new_successful_observation = False
         protected_access_attempted = False
         runtime_call_count = state.get("runtime_call_count", 0)
@@ -516,7 +881,9 @@ def build_agent_graph(
         for call_index, tool_call in enumerate(calls):
             function = tool_call["function"]
             name, arguments = function["name"], function["arguments"]
-            total_budget_exhausted = call_index >= remaining_budget
+            total_budget_exhausted = (
+                name != HYPOTHESIS_TOOL_NAME and call_index >= remaining_budget
+            )
             per_step_exhausted = (
                 name != HYPOTHESIS_TOOL_NAME
                 and executed_external_count >= per_step_limit
@@ -524,25 +891,65 @@ def build_agent_graph(
             update_missing = (
                 name != HYPOTHESIS_TOOL_NAME and hypothesis_update_required
             )
-            if total_budget_exhausted or per_step_exhausted or update_missing:
-                reason = (
-                    "tool_budget_exhausted"
-                    if total_budget_exhausted
-                    else (
-                        "per_step_tool_limit"
-                        if per_step_exhausted
-                        else "hypothesis_update_required"
-                    )
+            initial_update_missing = (
+                name != HYPOTHESIS_TOOL_NAME and initial_hypotheses_missing
+            )
+            action_mismatch = False
+            expected_action_text = ""
+            if (
+                name != HYPOTHESIS_TOOL_NAME
+                and current_hypotheses
+                and not hypothesis_update_required
+            ):
+                selected_action = _select_next_action(
+                    current_hypotheses,
+                    existing_observations,
                 )
-                error = (
-                    "工具调用预算已经用完，请根据已有证据生成报告。"
-                    if total_budget_exhausted
-                    else (
-                        f"单轮最多执行 {per_step_limit} 个工具，请按信息增益排序后在下一轮继续。"
-                        if per_step_exhausted
-                        else "上一轮的新证据尚未写入假设；请先单独调用 update_hypotheses，再继续调查。"
+                if selected_action is not None:
+                    selected_hypothesis, expected_action = selected_action
+                    actual_arguments = _normalized_call_arguments(name, arguments)
+                    expected_arguments, _ = registry.normalize_arguments(
+                        expected_action.tool_name,
+                        expected_action.arguments,
                     )
-                )
+                    action_mismatch = (
+                        name != expected_action.tool_name
+                        or actual_arguments is None
+                        or actual_arguments != expected_arguments
+                    )
+                    expected_action_text = (
+                        f"{selected_hypothesis.hypothesis_id} 要求调用 "
+                        f"{expected_action.tool_name}("
+                        f"{json.dumps(expected_action.arguments, ensure_ascii=False, sort_keys=True)})"
+                    )
+            if (
+                total_budget_exhausted
+                or per_step_exhausted
+                or initial_update_missing
+                or update_missing
+                or action_mismatch
+            ):
+                if total_budget_exhausted:
+                    reason = "tool_budget_exhausted"
+                    error = "工具调用预算已经用完，请根据已有证据生成报告。"
+                elif per_step_exhausted:
+                    reason = "per_step_tool_limit"
+                    error = f"单轮最多执行 {per_step_limit} 个工具，请按信息增益排序后在下一轮继续。"
+                elif initial_update_missing:
+                    reason = "initial_hypothesis_required"
+                    error = (
+                        "尚未建立诊断假设；请先单独调用 update_hypotheses 保存"
+                        "可证伪候选根因和结构化 next_action，再执行外部调查。"
+                    )
+                elif update_missing:
+                    reason = "hypothesis_update_required"
+                    error = "上一轮的新证据尚未写入假设；请先单独调用 update_hypotheses，再继续调查。"
+                else:
+                    reason = "next_action_mismatch"
+                    error = (
+                        "工具调用与已校验的结构化 next_action 不一致；"
+                        f"请精确执行 {expected_action_text}，不得扩大读取范围。"
+                    )
                 result = json.dumps({
                     "ok": False,
                     "error": error,
@@ -572,15 +979,36 @@ def build_agent_graph(
                 continue
 
             if name == HYPOTHESIS_TOOL_NAME:
+                if not hypothesis_update_allowed:
+                    result = json.dumps({
+                        "ok": False,
+                        "error": (
+                            "当前没有等待归类的新证据，禁止再次更新假设；"
+                            "请执行最高优先级假设的 next_action 获取新证据。"
+                        ),
+                        "meta": {"reason": "hypothesis_update_not_allowed"},
+                    }, ensure_ascii=False)
+                    print("跳过未开放的假设更新：请先执行 next_action")
+                    tool_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result,
+                    })
+                    continue
                 parsed, result = parse_hypothesis_update(
                     arguments,
                     existing_observations + [
                         ToolObservation.model_validate(item) for item in observations
                     ],
+                    allowed_tools=allowed_tools,
+                    require_next_action=not state.get(
+                        "final_classification_used", False
+                    ),
                 )
                 if parsed is not None:
                     current_hypotheses = parsed
                     hypothesis_update_required = False
+                    hypothesis_update_allowed = False
                     print(
                         "更新诊断假设: "
                         + ", ".join(
@@ -602,13 +1030,33 @@ def build_agent_graph(
             observation_id = f"obs-{len(state.get('observations', [])) + len(observations) + 1:03d}"
             started_at = perf_counter()
             repeated = False
-            if signature in known_signatures:
+            covered_by = _covered_read_observation(
+                name,
+                arguments,
+                existing_observations + [
+                    ToolObservation.model_validate(item) for item in observations
+                ],
+            )
+            if signature in known_signatures or covered_by is not None:
                 repeated_count += 1
                 repeated = True
+                overlap_detail = (
+                    f"；请求范围已被 {covered_by.observation_id} 完整覆盖"
+                    if covered_by is not None
+                    else ""
+                )
                 result = json.dumps({
                     "ok": False,
-                    "error": "相同工具和参数已经调用过，请使用已有结果并生成最终报告。",
-                    "meta": {"reason": "duplicate_tool_call"},
+                    "error": (
+                        "相同调用或读取范围已经取得过，没有新增信息；"
+                        f"请使用已有 Observation{overlap_detail}。"
+                    ),
+                    "meta": {
+                        "reason": "duplicate_tool_call",
+                        "covered_by_observation_id": (
+                            covered_by.observation_id if covered_by is not None else None
+                        ),
+                    },
                 }, ensure_ascii=False)
                 print(f"跳过重复工具调用: {name}({arguments})")
             else:
@@ -763,7 +1211,9 @@ def build_agent_graph(
                 "优先把其中具有 code/documentation/git/runtime 来源的成功 Observation 写入 Evidence。"
                 "如果假设仍是 supported，只能输出 medium 或 low，不能输出 high；"
                 "即使证据不足，也要说明缺少什么、降低 confidence，并给出下一步建议；"
-                "不要返回空白兜底说明。"
+                "不要返回空白兜底说明。报告保持紧凑：最多 3 个 Claim、5 条 Evidence，"
+                "每段 description 只说明该来源直接证明的事实；字符串中的代码双引号"
+                "必须按 JSON 转义，不要使用 Markdown 或换行扩写分析。"
                 "\n\n" + report_contract
             ),
         }]
@@ -784,11 +1234,55 @@ def build_agent_graph(
 
     def validate_report(state: AgentState) -> dict:
         content = state["messages"][-1].get("content")
+        if (
+            content
+            and not state.get("hypotheses")
+            and not state.get("synthesis_attempted")
+        ):
+            inline_arguments = _inline_hypothesis_arguments(content)
+            if inline_arguments is not None:
+                parsed, inline_result = parse_hypothesis_update(
+                    inline_arguments,
+                    [
+                        ToolObservation.model_validate(item)
+                        for item in state.get("observations", [])
+                    ],
+                    allowed_tools=allowed_tools,
+                )
+                if parsed is not None:
+                    print(
+                        "兼容模式接纳内联诊断假设: "
+                        + ", ".join(
+                            f"{item.hypothesis_id}={item.status}"
+                            f"({item.confidence:.0%})"
+                            for item in parsed
+                        )
+                    )
+                    return {
+                        "hypotheses": [
+                            item.model_dump(mode="json") for item in parsed
+                        ],
+                        "validation_error": None,
+                    }
+                error = "内联假设更新无效：" + inline_result
+                return {
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            f"{error}。请按当前 update_hypotheses Schema 修正；"
+                            "不要输出最终报告或调用外部工具。"
+                        ),
+                    }],
+                    "validation_error": error,
+                    "validation_errors": [error],
+                }
         if not content:
             error = "模型没有返回最终报告"
         else:
             try:
-                report = parse_incident_report(content)
+                report, local_json_repaired = _parse_incident_report_with_repair(
+                    content
+                )
                 current_hypotheses = [
                     DiagnosticHypothesis.model_validate(item)
                     for item in state.get("hypotheses", [])
@@ -797,6 +1291,22 @@ def build_agent_graph(
                     report,
                     current_hypotheses,
                 )
+                if (
+                    not current_hypotheses
+                    and not state.get("synthesis_attempted")
+                ):
+                    hypothesis_errors.insert(
+                        0,
+                        "调查尚未建立初始诊断假设，不能直接提交最终报告",
+                    )
+                if (
+                    state.get("hypothesis_update_required")
+                    and not state.get("synthesis_attempted")
+                ):
+                    hypothesis_errors.insert(
+                        0,
+                        "最新成功 Observation 尚未归类，不能直接提交最终报告",
+                    )
                 provenance_errors = validate_report_provenance(
                     report,
                     [
@@ -812,6 +1322,10 @@ def build_agent_graph(
                         "report": report.model_dump(),
                         "validation_error": None,
                         "stop_reason": "completed",
+                        "repair_attempted": (
+                            state.get("repair_attempted", False)
+                            or local_json_repaired
+                        ),
                     }
             except ValidationError as exc:
                 error = format_report_validation_error(exc)
@@ -1161,6 +1675,7 @@ def build_agent_graph(
 
     builder = StateGraph(AgentState)
     builder.add_node("call_model", call_model)
+    builder.add_node("classify_final_evidence", classify_final_evidence)
     builder.add_node("runtime_review", runtime_review)
     builder.add_node("execute_tools", execute_tools)
     builder.add_node("synthesize_report", synthesize_report)
@@ -1185,10 +1700,12 @@ def build_agent_graph(
     })
     builder.add_conditional_edges("execute_tools", route_after_tools, {
         "call_model": "call_model",
+        "classify_final_evidence": "classify_final_evidence",
         "synthesize_report": "synthesize_report",
         "human_review": "human_review",
         "build_cancelled": "build_cancelled",
     })
+    builder.add_edge("classify_final_evidence", "execute_tools")
     builder.add_conditional_edges("human_review", route_after_human_review, {
         "call_model": "call_model",
         "synthesize_report": "synthesize_report",
