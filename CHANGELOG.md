@@ -24,10 +24,12 @@
 - `run_evals.py` 默认只选 development；跨集合案例会被拒绝。正式 baseline 要求干净工作区，报告写入独立目录且禁止覆盖，并记录提交、数据摘要、模型配置和预算元数据。
 - 首次单案例烟雾运行发现 `test_graph.py`、Harness/Runtime 实现仍可被搜索，报告引用测试答案后获得 1/1；该结果已隔离并标记 invalid，不计入基线。
 - 文件工具现在统一隐藏所有 `test_*.py` 及 Harness、Runtime、doctor、Benchmark 实现；同时清理业务代码中的答案式 BUG 注释和故障提示性 docstring。
-- 新增十七项离线测试，总计 172 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
+- 新增十八项离线测试，总计 173 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
 - 保持 graph.py、Prompt、模型/工具调用预算、上下文压缩、假设协议及评分器原样；兼容 run_demo_case 仍为 V13 的四个案例，新增案例使用 run_check。
 - 隔离修复提交 `3c1b4b8` 的 `missing_user_id + full` 来源审计通过，形成首个有效 V13 单案例基线：0/1，根因 33%、代码 50%、文档 0%、引用/Evidence/Claim 100%，10 次模型调用、13 次工具调用、61,085 Token、60.58 秒、格式修复 1、fallback 0。失败表现为只定位 Service 抛错点，没有读取 API 与契约，并在后半段连续更新假设。
-- 当前只是单案例单次结果，尚未完成五个 development 案例的 V13 基线，也没有 V14 提升结论。
+- 完成五个 development 案例的 V13 单次基线并通过来源审计：1/5（20%），平均根因 40%、代码 50%、文档 20%、引用/Evidence/Claim 60%、Observation 利用率 61%；平均 9.8 次模型调用、13.6 次工具调用、57,337 Token，总 Token 286,683、总耗时 262.84 秒；格式修复 4/5，fallback 2/5，Provenance 违规与重复调用均为 0。
+- 新增 `demo_app/evals/results/v13-v14.1-development.json`，保存逐例指标、原始报告 SHA-256、实验配置、来源审计和适用限制；原始含调查内容的报告继续只保存在被隔离且 Git 忽略的 `.incident_reports/`。
+- 当前尚无 V14 提升结论；后续优化必须使用相同五案例、Profile、预算和单次运行口径进行对照。
 
 ## V13：Patch Sandbox Verification（隔离补丁验证）
 

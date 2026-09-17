@@ -10,6 +10,8 @@
 
 隔离修复提交 `3c1b4b8` 上的第二次单案例运行来源审计通过，可作为 V13 development 基线样本。结果为 0/1：根因关键词 33%、代码文件覆盖 50%、文档覆盖 0%，引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0；模型调用 10 次、工具调用 13 次、Token 61,085、耗时 60.58 秒、格式修复 1 次、fallback 0 次、Observation 利用率 83%。Agent 找到了 Service 的 `payload["user_id"]` 直接报错点，但没有读取 API 入口或业务契约，8 步的后半段连续更新假设，因此遗漏“API 缺少校验”这一系统根因。该结果是单案例单次样本，不能外推为总体通过率。
 
+五个 development 案例的 V13 基线现已完成，每例一次，来源审计全部通过。总体通过 1/5（20%），平均根因覆盖 40%、代码文件覆盖 50%、文档覆盖 20%、引用有效率 60%、Observation 利用率 61%；平均每例 9.8 次模型调用、13.6 次工具调用和 57,337 Token，总 Token 286,683、总耗时 262.84 秒。格式修复 4/5，fallback 2/5，Provenance 违规和重复工具调用均为 0。只有 `retry_non_idempotent` 通过；详细逐例数据保存在 `demo_app/evals/results/v13-v14.1-development.json`。这是固定模型与配置下的单次小样本，后续只能与相同五案例、Profile 和预算的 V14 结果比较。
+
 新增案例可离线复现：
 
 ```powershell
@@ -1360,7 +1362,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 172 项测试，覆盖：
+当前共有 173 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；

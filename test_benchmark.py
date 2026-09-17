@@ -1,5 +1,6 @@
 """V14.1 Benchmark 划分、答案隔离和基线保存测试；不调用模型。"""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from run_evals import _baseline_output_path
 ROOT = Path(__file__).resolve().parent
 CASES_DIR = ROOT / "demo_app" / "evals"
 MANIFEST_PATH = CASES_DIR / "_benchmark_manifest.json"
+BASELINE_SUMMARY_PATH = CASES_DIR / "results" / "v13-v14.1-development.json"
 
 
 class BenchmarkManifestTests(unittest.TestCase):
@@ -82,6 +84,22 @@ class BenchmarkManifestTests(unittest.TestCase):
         self.assertEqual(path.parent.name, "v13")
         with self.assertRaisesRegex(ValueError, "baseline label"):
             _baseline_output_path("../outside", "v14.1", "development", "stamp")
+
+    def test_committed_baseline_summary_matches_frozen_development_set(self):
+        manifest, _ = load_benchmark_manifest(MANIFEST_PATH)
+        baseline = json.loads(BASELINE_SUMMARY_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {item["case_id"] for item in baseline["cases"]},
+            set(manifest.development_cases),
+        )
+        self.assertEqual(baseline["summary"]["case_count"], 5)
+        self.assertEqual(baseline["summary"]["passed_count"], 1)
+        self.assertEqual(baseline["summary"]["pass_rate"], 0.2)
+        self.assertTrue(baseline["source_audit"]["passed"])
+        self.assertEqual(baseline["source_audit"]["forbidden_paths_found"], [])
+        self.assertTrue(all(
+            len(item["sha256"]) == 64 for item in baseline["source_reports"]
+        ))
 
     def test_benchmark_implementation_is_hidden_from_agent_file_tools(self):
         from tools import read_file, search_code, ReadFileArgs, SearchCodeArgs
