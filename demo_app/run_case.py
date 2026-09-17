@@ -1,6 +1,7 @@
-"""运行四个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
+"""运行六个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from demo_app.app.database import create_connection
 from demo_app.app.pool import ConnectionPool
 from demo_app.app.worker import process_job
 from demo_app.app.webhook import deliver_webhook
+from demo_app.app.async_jobs import profile_name
+from demo_app.app.retry_policy import charge_order
+from demo_app.fixtures.payment_gateway import PaymentGateway
 
 
 CASES = (
@@ -22,6 +26,8 @@ CASES = (
     "schema_mismatch",
     "connection_leak",
     "documentation_required",
+    "async_missing_await",
+    "retry_non_idempotent",
 )
 
 
@@ -43,6 +49,13 @@ def run_case(case_id: str) -> None:
         process_job(pool, should_fail=False)
     elif case_id == "documentation_required":
         deliver_webhook()
+    elif case_id == "async_missing_await":
+        asyncio.run(profile_name("user-001"))
+    elif case_id == "retry_non_idempotent":
+        gateway = PaymentGateway()
+        charge_order(gateway, "order-001", 100)
+        if len(gateway.charges) != 1:
+            raise RuntimeError("duplicate charge: expected 1, got 2")
     else:
         raise ValueError(f"未知案例: {case_id}")
 

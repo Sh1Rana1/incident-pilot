@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v14.1",
+  "agent_baseline_commit": "8c804fb1658def12f5bece17af045a75d0e2bd95",
+  "development_cases": [
+    "missing_user_id",
+    "schema_mismatch",
+    "connection_leak",
+    "async_missing_await",
+    "retry_non_idempotent"
+  ],
+  "hidden_cases": [
+    "documentation_required"
+  ],
+  "challenge_cases": [
+    "git_regression",
+    "misleading_documentation"
+  ],
+  "runtime_cases": [
+    "runtime_required"
+  ],
+  "baseline_profile": "full",
+  "runs_per_case": 1,
+  "max_steps": 8
+}

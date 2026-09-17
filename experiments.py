@@ -65,6 +65,28 @@ class ProfileSummary(StrictModel):
     total_duration_ms: float
 
 
+class ExperimentMetadata(StrictModel):
+    schema_version: int = 1
+    created_at: str
+    benchmark_version: str
+    benchmark_manifest_sha256: str
+    evaluation_cases_sha256: str
+    dataset_split: str
+    case_ids: list[str]
+    agent_baseline_commit: str
+    repository_commit: str
+    working_tree_dirty: bool
+    model: str
+    output_mode: str
+    strict_tools: bool
+    temperature_setting: str
+    max_steps: int
+    max_model_calls: int
+    max_tool_calls: int
+    max_tools_per_step: int
+    baseline_label: str | None = None
+
+
 class ExperimentRun(StrictModel):
     profiles: list[str]
     runs_per_case: int
@@ -72,6 +94,7 @@ class ExperimentRun(StrictModel):
     case_summaries: list[ProfileSummary]
     profile_summaries: list[ProfileSummary]
     overall_summary: ProfileSummary
+    metadata: ExperimentMetadata | None = None
 
 
 ExperimentRunner = Callable[[str, int, str], AgentRunResult]
@@ -268,6 +291,8 @@ def run_experiment(
 
 
 def save_experiment(result: ExperimentRun, output_path: Path) -> None:
+    if output_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有实验报告: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2),

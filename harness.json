@@ -2,6 +2,46 @@
   "version": 1,
   "checks": [
     {
+      "check_id": "demo_async_missing_await",
+      "runner": "demo_case",
+      "target": "async_missing_await",
+      "description": "复现用户资料查询失败",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/async_jobs.py"]
+    },
+    {
+      "check_id": "async_profile_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.async_contract_check",
+      "description": "验证资料查询返回显示名",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/async_jobs.py"]
+    },
+    {
+      "check_id": "demo_retry_non_idempotent",
+      "runner": "demo_case",
+      "target": "retry_non_idempotent",
+      "description": "复现订单重复扣款",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/retry_policy.py"]
+    },
+    {
+      "check_id": "payment_single_charge_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.payment_contract_check",
+      "description": "验证响应丢失时单次扣款、恢复收据及不同订单独立支付",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/retry_policy.py"]
+    },
+    {
       "check_id": "demo_missing_user_id",
       "runner": "demo_case",
       "target": "missing_user_id",

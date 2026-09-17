@@ -1,17 +1,33 @@
-"""运行真实模型的 V12.1.1 Runtime、Memory、成本与稳定性实验。"""
+"""运行真实模型实验，并保存可复现的 V14.1 Benchmark 元数据。"""
 
 import argparse
-from datetime import datetime
+import re
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from agent import run_agent_detailed
+from benchmark import (
+    BenchmarkSplit,
+    evaluation_digest,
+    load_benchmark_manifest,
+    select_case_ids,
+    validate_manifest_coverage,
+)
+from config import load_config
 from evaluation import load_cases
-from experiments import ExperimentRun, run_experiment, save_experiment
+from experiments import (
+    ExperimentMetadata,
+    ExperimentRun,
+    run_experiment,
+    save_experiment,
+)
 from tool_profiles import STANDARD_EXPERIMENT_PROFILES, TOOL_PROFILES
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CASES_DIR = ROOT / "demo_app" / "evals"
+DEFAULT_MANIFEST_PATH = DEFAULT_CASES_DIR / "_benchmark_manifest.json"
 DEFAULT_OUTPUT_DIR = ROOT / ".incident_reports"
 MAX_UNCONFIRMED_INVESTIGATIONS = 3
 
@@ -26,6 +42,32 @@ def enforce_experiment_cost_guard(
             f"超过免确认上限 {MAX_UNCONFIRMED_INVESTIGATIONS}。请先用 --case 缩小范围；"
             "确实需要完整实验时显式追加 --yes。"
         )
+
+
+def _repository_state() -> tuple[str, bool]:
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
+        text=True, check=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return commit, bool(status.strip())
+
+
+def _baseline_output_path(
+    label: str,
+    benchmark_version: str,
+    split: str,
+    timestamp: str,
+) -> Path:
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}", label):
+        raise ValueError("baseline label 只能使用字母、数字、点、下划线或连字符")
+    return (
+        DEFAULT_OUTPUT_DIR / "baselines" / label /
+        f"{benchmark_version}-{split}-{timestamp}.json"
+    )
 
 
 def format_summary(result: ExperimentRun) -> str:
@@ -123,13 +165,19 @@ def format_summary(result: ExperimentRun) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="运行 IncidentPilot V12.1.1 Runtime/Memory 与稳定性实验（会调用真实模型）"
+        description="运行 IncidentPilot Benchmark 实验（会调用真实模型）"
     )
     parser.add_argument(
         "--case",
         action="append",
         dest="case_ids",
         help="只运行指定 case_id；可以重复提供",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["development", "hidden", "challenge", "runtime", "all"],
+        default="development",
+        help="Benchmark 集合，默认 development；hidden 不用于日常调试",
     )
     parser.add_argument("--max-steps", type=int, default=8)
     profile_group = parser.add_mutually_exclusive_group()
@@ -153,6 +201,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, help="自定义 JSON 报告路径")
     parser.add_argument(
+        "--baseline-label",
+        help="把不可覆盖的报告保存到 baselines/<label>；要求 Git 工作区干净",
+    )
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="确认运行超过 3 次 Agent 调查的高费用实验",
@@ -171,10 +223,18 @@ def main() -> None:
         raise SystemExit("--max-steps 必须大于等于 1")
     if not 1 <= arguments.runs <= 10:
         raise SystemExit("--runs 必须在 1 到 10 之间")
-    cases = load_cases(
-        DEFAULT_CASES_DIR,
-        set(arguments.case_ids) if arguments.case_ids else None,
-    )
+    manifest, manifest_digest = load_benchmark_manifest(DEFAULT_MANIFEST_PATH)
+    validate_manifest_coverage(manifest, DEFAULT_CASES_DIR)
+    split: BenchmarkSplit = arguments.split
+    try:
+        selected_ids = select_case_ids(
+            manifest,
+            split,
+            set(arguments.case_ids) if arguments.case_ids else None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    cases = load_cases(DEFAULT_CASES_DIR, selected_ids)
     profiles = (
         list(STANDARD_EXPERIMENT_PROFILES)
         if arguments.compare
@@ -184,6 +244,12 @@ def main() -> None:
         raise SystemExit(
             "运行 full_runtime Profile 必须显式添加说明执行权限：追加 --allow-runtime。"
         )
+    if split == "runtime" and "full_runtime" not in profiles:
+        raise SystemExit("runtime 集合必须使用 --profile full_runtime。")
+    repository_commit, working_tree_dirty = _repository_state()
+    if arguments.baseline_label and working_tree_dirty:
+        raise SystemExit("正式 baseline 要求 Git 工作区干净，请先提交当前数据集版本。")
+    config = load_config(ROOT)
     investigation_count = len(profiles) * len(cases) * arguments.runs
     print(
         f"将运行 {investigation_count} 次 Agent 调查："
@@ -207,8 +273,39 @@ def main() -> None:
         arguments.runs,
         arguments.max_steps,
     )
+    result = result.model_copy(update={"metadata": ExperimentMetadata(
+        created_at=datetime.now(timezone.utc).isoformat(),
+        benchmark_version=manifest.benchmark_version,
+        benchmark_manifest_sha256=manifest_digest,
+        evaluation_cases_sha256=evaluation_digest(DEFAULT_CASES_DIR, selected_ids),
+        dataset_split=split,
+        case_ids=[case.case_id for case in cases],
+        agent_baseline_commit=manifest.agent_baseline_commit,
+        repository_commit=repository_commit,
+        working_tree_dirty=working_tree_dirty,
+        model=config.model,
+        output_mode=config.output_mode,
+        strict_tools=config.strict_tools,
+        temperature_setting="provider_default",
+        max_steps=arguments.max_steps,
+        max_model_calls=config.max_model_calls,
+        max_tool_calls=config.max_tool_calls,
+        max_tools_per_step=config.max_tools_per_step,
+        baseline_label=arguments.baseline_label,
+    )})
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_path = arguments.output or DEFAULT_OUTPUT_DIR / f"eval-{timestamp}.json"
+    output_path = arguments.output
+    if output_path is None and arguments.baseline_label:
+        try:
+            output_path = _baseline_output_path(
+                arguments.baseline_label,
+                manifest.benchmark_version,
+                split,
+                timestamp,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    output_path = output_path or DEFAULT_OUTPUT_DIR / f"eval-{timestamp}.json"
     if not output_path.is_absolute():
         output_path = ROOT / output_path
     save_experiment(result, output_path)

@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/run_case.py", in run_case
+    raise RuntimeError("duplicate charge: expected 1, got 2")
+RuntimeError: duplicate charge: expected 1, got 2

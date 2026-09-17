@@ -286,6 +286,7 @@ def load_cases(directory: Path, case_ids: Optional[set[str]] = None) -> list[Eva
     cases = [
         EvaluationCase.model_validate_json(path.read_text(encoding="utf-8"))
         for path in sorted(directory.glob("*.json"))
+        if not path.name.startswith("_")
     ]
     if case_ids is not None:
         cases = [case for case in cases if case.case_id in case_ids]

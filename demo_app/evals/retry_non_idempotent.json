@@ -1,0 +1,8 @@
+{
+  "case_id": "retry_non_idempotent",
+  "question": "订单支付在响应超时后出现 RuntimeError: duplicate charge: expected 1, got 2。请结合 demo_app 支付客户端与网关契约诊断根因并给出修复建议。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["重试", "幂等", "超时"],
+  "evidence_files": ["demo_app/app/retry_policy.py"],
+  "relevant_docs": ["demo_app/docs/payment-contract.md"]
+}

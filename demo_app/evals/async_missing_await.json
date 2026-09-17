@@ -1,0 +1,8 @@
+{
+  "case_id": "async_missing_await",
+  "question": "用户资料查询出现 TypeError: 'coroutine' object is not subscriptable。请调查 demo_app 的资料查询调用链、业务契约和根因。",
+  "expected_exception": "TypeError",
+  "root_cause_keywords": ["await", "fetch_profile", "协程"],
+  "evidence_files": ["demo_app/app/async_jobs.py"],
+  "relevant_docs": ["demo_app/docs/async-contract.md"]
+}

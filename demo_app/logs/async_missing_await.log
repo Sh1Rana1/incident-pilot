@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/app/async_jobs.py", in profile_name
+    return profile["display_name"]
+TypeError: 'coroutine' object is not subscriptable

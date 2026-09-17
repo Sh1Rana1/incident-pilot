@@ -1,4 +1,20 @@
-# IncidentPilot V13 · Patch Sandbox Verification
+# IncidentPilot V14.1 · Benchmark 首批扩充（V13 Agent）
+
+当前增加两个离线故障案例：异步资料查询与订单支付重试。共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。Agent 控制流、Prompt、预算、报告校验和评分规则保持 V13；本阶段未运行真实模型，也尚无 V14 性能提升数据。
+
+验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
+
+本阶段补上文件工具对 `checks` 目录的隔离，新增检查源码、Fixture、Eval 均不能通过 read/search/list 获取；这是一项基线差异，后续对照应对两版应用相同隔离边界。三个直接写出旧案例根因和修复的事故文档已移除，Evaluation 改为引用正常的 API、数据库和 Runbook 契约。`_benchmark_manifest.json` 冻结开发、hidden、challenge 和 Runtime 集合，默认实验只选择 development。
+
+新增案例可离线复现：
+
+```powershell
+.\.venv\Scripts\python.exe -m demo_app.run_case async_missing_await
+.\.venv\Scripts\python.exe -m demo_app.run_case retry_non_idempotent
+.\.venv\Scripts\python.exe -m unittest test_demo_app -v
+```
+
+前两条在故障版本中预期非零退出。新增案例通过 `run_check` 的预登记检查运行；兼容工具 `run_demo_case` 仍只接受 V13 的四个案例。`async_profile_contract` 和 `payment_single_charge_contract` 是故意在故障版本失败的按需契约检查，不加入默认测试发现；默认测试会验证这些失败确实被检测到。
 
 IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看代码、文档和 Git 信息，并可在人工批准后运行 Safe Test Harness，取得真实 Runtime Evidence。V13 在严格 Patch Proposal 之后增加独立审批与临时副本验证：系统先在副本中确认原故障可复现，再应用候选 diff，最后运行覆盖修改文件的契约检查和全局回归检查。正式工作区始终不被修改，验证过程也不会再调用模型。
 
@@ -383,7 +399,7 @@ IncidentPilot 可以：
 - 自动选择覆盖修改文件的契约检查和全局回归检查，并输出逐项验证结果；
 - 拒绝未读取文件、越界行号、伪造 Observation 和虚假 Git 提交；
 - 接受纯 JSON、JSON 代码块和前后带少量说明的合法报告，并记录历次验证错误；
-- 批量评测七个故障诊断案例，其中一个强制要求 Runtime Evidence；
+- 批量评测九个故障诊断案例，其中一个强制要求 Runtime Evidence；
 - 比较不同工具组合并统计多次运行稳定性。
 
 ### 2.2 不能做什么
@@ -447,7 +463,7 @@ incident-pilot/
 │   ├── logs/                   # 可用于提问的简化 traceback
 │   ├── checks/                 # 可由 Harness 运行的 Smoke 与业务契约检查
 │   ├── evals/                  # Agent 不可见的标准答案
-│   └── run_case.py             # 四个可执行故障的入口
+│   └── run_case.py             # 六个可执行故障的入口
 ├── test_agent.py
 ├── test_context_manager.py
 ├── test_demo_app.py
@@ -473,7 +489,7 @@ incident-pilot/
 
 ```text
 .incident_cache/rag_index.json  # RAG 索引缓存
-.incident_reports/*.json        # Evaluation 与实验报告
+.incident_reports/**/*.json     # Evaluation、正式基线与实验报告
 .incident_state/incident_pilot.sqlite3  # 持久化图状态、会话、Runtime 账本和长期记忆
 ```
 
@@ -806,7 +822,7 @@ Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，
 
 安全清单保存在 `harness.json`。每一项包含 `check_id`、`runner`、`target`、`description`、`timeout_seconds` 和 `expected_exit_codes`。当前 Runner 有三种：
 
-- `demo_case`：target 必须属于四个固定故障案例；
+- `demo_case`：target 必须属于六个固定故障案例；
 - `unittest`：target 必须是合法的 Python 模块名，不能附加参数；
 - `pytest`：target 必须是仓库内已经存在的 Python 文件或目录，不能越界或使用通配符。
 
@@ -1172,34 +1188,50 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 
 交互式命令行选择 `full_runtime`，但 `ENABLE_RUNTIME_TOOLS=false` 时会在构图前移除 Runtime Schema，此时实际能力等同 `full`。开启后仍需要每次人工批准。普通 `--compare` 有意只比较 `code_only`、`code_rag`、`full`，不会悄悄增加可执行实验。
 
-### 11.2 七个案例的分工
+### 11.2 九个案例的分工
 
-| Case | 主要目的 |
-|---|---|
-| `missing_user_id` | 基础 API 调用链诊断 |
-| `schema_mismatch` | 基础数据库字段不一致诊断 |
-| `connection_leak` | 基础异常路径资源泄漏诊断 |
-| `documentation_required` | 没有供应商文档就无法知道准确的 10 秒约束 |
-| `git_regression` | 要求通过 Git 历史给出引入缺陷的提交 `61932b9` |
-| `misleading_documentation` | 检查 Agent 能否识别已废弃的扩容建议并坚持代码证据 |
-| `runtime_required` | 明确要求实际复现，并以 Runtime ID 证明运行确实发生 |
+| Case | 集合 | 主要目的 |
+|---|---|---|
+| `missing_user_id` | development | 基础 API 调用链诊断 |
+| `async_missing_await` | development | 异步调用与返回值契约诊断 |
+| `retry_non_idempotent` | development | 支付响应丢失与重试契约诊断 |
+| `schema_mismatch` | development | 基础数据库字段不一致诊断 |
+| `connection_leak` | development | 基础异常路径资源泄漏诊断 |
+| `documentation_required` | hidden | 没有供应商文档就无法知道准确的 10 秒约束 |
+| `git_regression` | challenge | 已知连接泄漏根因的 Git 历史变体 |
+| `misleading_documentation` | challenge | 已知连接泄漏根因的误导文档变体 |
+| `runtime_required` | runtime | 实际复现并引用 Runtime ID |
 
-`documentation_required`、`git_regression`、`misleading_documentation` 和 `runtime_required` 是专门拉开工具能力差异的案例。`git_regression` 依赖本仓库现有 Git 历史；如果导出项目时丢失 `.git`，该案例中的 Git 组也无法取得标准提交哈希。`runtime_required` 在没有已落地 Runtime Evidence 时必定失败，不能靠静态代码猜测通过。
+`git_regression` 和 `misleading_documentation` 复用 development 中的连接泄漏，属于工具能力挑战题，不计作未见故障泛化。当前真正的 hidden set 只有 `documentation_required`；规模不足，后续新增案例时继续补充。`git_regression` 依赖仓库历史；如果导出项目时丢失 `.git`，Git 组无法取得标准提交哈希。`runtime_required` 没有 Runtime Evidence 时必定失败。
 
 ### 11.3 运行实验
 
-默认组合是全部七个 Case、`full` Profile、每个一次，但费用保护会在真正调用模型前阻止超过 3 次且没有显式确认的实验：
+默认组合是五个 development Case、`full` Profile、每个一次。费用保护会在模型调用前阻止未带 `--yes` 的五次实验：
 
 ```powershell
 .\.venv\Scripts\python.exe run_evals.py
 ```
 
-上面的命令会显示 7 次调查并安全退出。日常请用 `--case` 缩小范围；只有确认费用后才追加 `--yes`。
+日常先用 `--case` 运行一个 development 案例。hidden 案例必须显式选择 `--split hidden`，避免在调试时意外查看结果；挑战题和 Runtime 题分别使用 `challenge`、`runtime`。
+
+干净工作区上的 V13 development 基线命令为：
+
+```powershell
+.\.venv\Scripts\python.exe run_evals.py `
+  --split development `
+  --profile full `
+  --runs 1 `
+  --baseline-label v13 `
+  --yes
+```
+
+`--baseline-label` 要求 Git 工作区干净，报告写入 `.incident_reports/baselines/<label>/`，已有文件永不覆盖。JSON 内同时记录 Agent 基线提交、当前仓库提交、Benchmark/案例摘要哈希、集合、案例顺序、模型、输出模式、工具严格模式、调用预算、步数和时间；温度标记为当前实现的 `provider_default`。
 
 最低成本的 Runtime 专项评测只有一次真实 Agent 调查，并且必须显式声明本次允许执行预登记案例：
 
 ```powershell
 .\.venv\Scripts\python.exe run_evals.py `
+  --split runtime `
   --case runtime_required `
   --profile full_runtime `
   --allow-runtime
@@ -1241,15 +1273,13 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 .\.venv\Scripts\python.exe run_evals.py --compare --runs 3 --yes
 ```
 
-标准三种 Profile × 七个 Case × 三次等于 63 次 Agent 调查；每次调查内部又可能请求模型多次。不要把全量矩阵当作烟雾测试：先跑一个静态案例的三组对照，再单独跑一次 Runtime Case，最后才按研究需要增加重复次数。
+development 的标准三种 Profile × 五个 Case × 三次等于 45 次 Agent 调查；每次调查内部又可能请求模型多次。不要把矩阵当作烟雾测试：先跑一个静态案例的三组对照，再单独跑一次 Runtime Case，最后才按研究需要增加重复次数。
 
-推荐的静态区分度对照有 9 次，必须显式确认：
+推荐的 challenge 对照有 6 次，必须显式确认：
 
 ```powershell
 .venv\Scripts\python.exe run_evals.py `
-  --case documentation_required `
-  --case git_regression `
-  --case misleading_documentation `
+  --split challenge `
   --compare `
   --yes
 ```
@@ -1258,11 +1288,13 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 
 ```text
 --case CASE_ID       只运行指定案例，可重复
+--split SPLIT        development、hidden、challenge、runtime 或 all
 --max-steps N        每次调查的模型轮数预算
 --profile PROFILE    选择 Profile，可重复
 --compare            使用全部三种 Profile
 --runs N             每个组合重复 1–10 次
 --output PATH        自定义 JSON 输出路径
+--baseline-label ID  保存不可覆盖的正式基线；要求工作区干净
 --yes                显式确认超过 3 次真实 Agent 调查
 --allow-runtime      预授权 full_runtime 执行预登记 Demo Case
 ```
@@ -1324,7 +1356,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 155 项测试，覆盖：
+当前共有 170 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1378,7 +1410,7 @@ ExperimentRun
 - 强制总结失败后的单次无工具格式修复；
 - Tool Profile Schema 过滤和执行层越权拒绝；
 - 多行命令行输入；
-- 四个可执行 Demo 故障稳定复现；
+- 六个可执行 Demo 故障稳定复现，以及两个新增案例的隔离参考修复验证；
 - Profile 对 RAG 文档和外部系统夹具的路径级隔离；
 - 文档得分必须由 `retrieve_docs` 调用触发；
 - 精确错误码和配置键在混合检索中获得额外权重，供应商契约优先召回；
@@ -1527,7 +1559,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ## 16. 当前限制
 
-- Demo 只有七个评测案例，规模仍然太小，不能代表生产环境；
+- Demo 只有九个评测案例，规模仍然太小，不能代表生产环境；
 - Case、代码注释和事故文档比较明确，存在玩具数据集偏简单的问题；
 - 根因关键词不理解同义词，也可能被关键词投机；
 - Observation 能确认模型实际看过来源，但不能完全判断自然语言 Claim 与证据的语义蕴含关系；

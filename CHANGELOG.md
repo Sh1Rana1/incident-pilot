@@ -13,6 +13,19 @@
 
 ---
 
+## V14.1：Benchmark 首批两个案例（2026-09-18）
+
+- 以 V13 `8c804fb` 为基点，修改前完整 155 项离线测试与 doctor 通过。
+- 新增 `async_missing_await`、`retry_non_idempotent`，每例包含故障代码、模块/脚本复现入口、简化日志、业务文档、Evaluation 标准。
+- Harness 新增两个 reproduction、两个 regression Check，共十个；复现检查预期非零退出，契约检查在当前故障代码上预期失败。默认测试验证故障与临时副本参考修复的两面行为。
+- 补上 read_file/search_code/list_files 对 checks 目录的隔离；既有 fixtures/evals 隔离继续保留。正式对照需统一此隔离边界。
+- 移除三份直接写出旧案例根因的事故文档；原评测改为引用 API、数据库和 Runbook 契约，RAG 指纹会自动重建。
+- 新增 `_benchmark_manifest.json`，冻结五个 development、一个 hidden、两个 challenge 和一个 runtime 案例。连接泄漏的两个变体不再冒充未见故障泛化。
+- `run_evals.py` 默认只选 development；跨集合案例会被拒绝。正式 baseline 要求干净工作区，报告写入独立目录且禁止覆盖，并记录提交、数据摘要、模型配置和预算元数据。
+- 新增十五项离线测试，总计 170 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
+- 保持 graph.py、Prompt、模型/工具调用预算、上下文压缩、假设协议及评分器原样；兼容 run_demo_case 仍为 V13 的四个案例，新增案例使用 run_check。
+- 尚未运行真实 development baseline；未产生通过率提升或 Token 优化结论。
+
 ## V13：Patch Sandbox Verification（隔离补丁验证）
 
 ### 新增

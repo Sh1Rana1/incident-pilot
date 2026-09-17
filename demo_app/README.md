@@ -9,6 +9,8 @@
 .venv\Scripts\python.exe -m demo_app.run_case schema_mismatch
 .venv\Scripts\python.exe -m demo_app.run_case connection_leak
 .venv\Scripts\python.exe -m demo_app.run_case documentation_required
+.venv\Scripts\python.exe -m demo_app.run_case async_missing_await
+.venv\Scripts\python.exe -m demo_app.run_case retry_non_idempotent
 ```
 
 也支持直接运行脚本：
@@ -19,7 +21,7 @@
 
 `-m demo_app.run_case` 仍是推荐方式，因为它明确告诉 Python 按包加载模块。直接运行方式会由启动脚本自动把项目根目录加入模块搜索路径，因此不会再出现 `No module named 'demo_app'`。
 
-四个命令都应该以非零状态结束并打印 traceback：
+六个命令都应该以非零状态结束并打印 traceback：
 
 | 案例 | 预期异常 | 主要能力 |
 |---|---|---|
@@ -27,6 +29,8 @@
 | `schema_mismatch` | `no column named user_id` | 代码 + 数据库迁移文档 |
 | `connection_leak` | `connection pool exhausted` | 代码 + Runbook/历史事故 |
 | `documentation_required` | `timeout_policy_violation` | 供应商契约文档 |
+| `async_missing_await` | `TypeError` | 用户资料异步调用契约 |
+| `retry_non_idempotent` | `duplicate charge` | 支付响应丢失契约 |
 
 配套材料：
 
@@ -45,4 +49,6 @@ V9 会维护候选假设，新证据必须先归入假设才能继续调查；�
 .venv\Scripts\python.exe -m unittest test_demo_app -v
 ```
 
-这些测试通过表示 Bug 仍然能够稳定复现，而不是表示业务代码没有 Bug。
+这些测试通过表示 Bug 仍然能够稳定复现，而不是表示业务代码没有 Bug。两个新增案例另有按需契约检查 `async_profile_contract`、`payment_single_charge_contract`；在故障版本上应失败，离线测试会在临时副本验证参考修复后通过。
+
+V14.1 共六个可执行场景、九个评测问题。新增场景由 Harness 的 `run_check` 执行，旧 `run_demo_case` 工具仍只接受前四个案例。`checks/`、`fixtures/`、`evals/` 对 Agent 文件工具隔离。新增业务文档只描述接口契约；三份直接给出旧案例根因的事故文档已移除。评测集合由内部 `_benchmark_manifest.json` 固定，日常默认只运行 development。

@@ -30,6 +30,8 @@ DEFAULT_MANIFEST_PATH = ROOT / "harness.json"
 MAX_CHECKS = 50
 MAX_FAILED_TESTS = 20
 DEMO_CASES = {
+    "async_missing_await",
+    "retry_non_idempotent",
     "missing_user_id",
     "schema_mismatch",
     "connection_leak",

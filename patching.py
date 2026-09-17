@@ -35,6 +35,7 @@ PROTECTED_FILES = {
     "patching.py",
     "patch_verification.py",
     "evaluation.py",
+    "benchmark.py",
     "experiments.py",
     "run_evals.py",
 }

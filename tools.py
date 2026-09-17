@@ -16,17 +16,19 @@ MAX_LIST_ITEMS = 200
 IGNORED_DIRS = {
     ".git", ".venv", ".incident_cache", ".incident_reports", ".incident_state",
     "evals", "__pycache__",
-    "node_modules", "build", "dist", ".pytest_cache", "fixtures",
+    "node_modules", "build", "dist", ".pytest_cache", "fixtures", "checks",
 }
 INTERNAL_ONLY_DIRS = {
-    ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures"
+    ".incident_cache", ".incident_reports", ".incident_state", "evals", "fixtures", "checks"
 }
 INTERNAL_ONLY_FILES = {
     "harness.json",
     "evaluation.py",
+    "benchmark.py",
     "experiments.py",
     "run_evals.py",
     "test_evaluation.py",
+    "test_benchmark.py",
     "test_experiments.py",
     "test_demo_app.py",
     "test_runtime_tools.py",

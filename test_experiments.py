@@ -118,6 +118,18 @@ class ExperimentTests(unittest.TestCase):
                 [missing_user_case()], runner, ROOT, ["full"], runs_per_case=0
             )
 
+    def test_saved_experiment_is_never_overwritten(self) -> None:
+        experiment = run_experiment(
+            [missing_user_case()], lambda _q, _m, _p: fake_result(), ROOT, ["full"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "baseline.json"
+            save_experiment(experiment, output)
+            original = output.read_bytes()
+            with self.assertRaisesRegex(FileExistsError, "拒绝覆盖"):
+                save_experiment(experiment, output)
+            self.assertEqual(output.read_bytes(), original)
+
     def test_terminal_summary_explains_failed_attempt(self) -> None:
         experiment = run_experiment(
             [missing_user_case()],
