@@ -8,6 +8,8 @@
 
 2026-09-18 首次 `missing_user_id + full` 烟雾运行虽然得到 1/1，但搜索结果暴露了 `test_graph.py`，最终报告还把测试中的标准结论列为 Evidence，因此该报告已移入 `.incident_reports/quarantine/v13/` 并标记 invalid，不能作为基线或简历数据。发现后的隔离修复只做离线验证，尚未再次调用模型。
 
+隔离修复提交 `3c1b4b8` 上的第二次单案例运行来源审计通过，可作为 V13 development 基线样本。结果为 0/1：根因关键词 33%、代码文件覆盖 50%、文档覆盖 0%，引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0；模型调用 10 次、工具调用 13 次、Token 61,085、耗时 60.58 秒、格式修复 1 次、fallback 0 次、Observation 利用率 83%。Agent 找到了 Service 的 `payload["user_id"]` 直接报错点，但没有读取 API 入口或业务契约，8 步的后半段连续更新假设，因此遗漏“API 缺少校验”这一系统根因。该结果是单案例单次样本，不能外推为总体通过率。
+
 新增案例可离线复现：
 
 ```powershell

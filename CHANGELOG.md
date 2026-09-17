@@ -26,7 +26,8 @@
 - 文件工具现在统一隐藏所有 `test_*.py` 及 Harness、Runtime、doctor、Benchmark 实现；同时清理业务代码中的答案式 BUG 注释和故障提示性 docstring。
 - 新增十七项离线测试，总计 172 项。测试不调用真实模型，不访问支付网络，不修改正式故障代码。
 - 保持 graph.py、Prompt、模型/工具调用预算、上下文压缩、假设协议及评分器原样；兼容 run_demo_case 仍为 V13 的四个案例，新增案例使用 run_check。
-- 尚未产生有效的 development baseline；未产生通过率提升或 Token 优化结论。
+- 隔离修复提交 `3c1b4b8` 的 `missing_user_id + full` 来源审计通过，形成首个有效 V13 单案例基线：0/1，根因 33%、代码 50%、文档 0%、引用/Evidence/Claim 100%，10 次模型调用、13 次工具调用、61,085 Token、60.58 秒、格式修复 1、fallback 0。失败表现为只定位 Service 抛错点，没有读取 API 与契约，并在后半段连续更新假设。
+- 当前只是单案例单次结果，尚未完成五个 development 案例的 V13 基线，也没有 V14 提升结论。
 
 ## V13：Patch Sandbox Verification（隔离补丁验证）
 
