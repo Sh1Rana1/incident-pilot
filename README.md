@@ -1258,7 +1258,7 @@ missing_aspects[]
 rationale
 ```
 
-本地代码根据固定规则生成独立 `semantic_pass`：根因完整度至少 4、报错点区分和修复可执行性至少 3，且遗漏不超过 minor。`CaseEvaluation.scores.passed` 始终只来自确定性规则；Judge 结果单独保存在 `llm_judge` 字段。调用失败或 JSON 不合法时保存 `status=error`，不重试、不丢弃确定性结果，并继续记录已经产生的 Judge Token。
+本地代码根据固定规则生成独立 `semantic_pass`：根因完整度至少 4、报错点区分和修复可执行性至少 3，且遗漏不超过 minor。`CaseEvaluation.scores.passed` 始终只来自确定性规则；Judge 结果单独保存在 `llm_judge` 字段。调用失败或 JSON 不合法时保存 `status=error`，不重试、不丢弃确定性结果，并继续记录已经产生的 Judge Token。部分 `json_object` 兼容服务会在六个规定字段外附加 `confidence` 等字段；本地解析器会丢弃这些未知顶层字段并写入 `ignored_fields`，但必需字段、类型和 1–5 分范围仍严格验证。
 
 启用同模型 Judge：
 
@@ -1468,7 +1468,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 207 项测试，覆盖：
+当前共有 208 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
 - LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；

@@ -30,6 +30,7 @@ SYSTEM_PROMPT = """你是 IncidentPilot 的独立语义质量评审。
 5. failure_site_distinction：1 表示把抛错点直接当根因，5 表示清楚区分并追踪上游原因。
 6. fix_actionability：1 表示空泛或治标，5 表示具体、针对根因且可验证。
 7. omission_severity 选择 none、minor、major、critical。
+8. 只能输出 Schema 中列出的六个字段；不要增加 confidence、score 或其他字段。
 只输出符合给定 JSON Schema 的 JSON 对象。"""
 
 
@@ -48,7 +49,7 @@ def _response_format(output_mode: OutputMode) -> dict | None:
     return None
 
 
-def _parse_assessment(content: str) -> LLMJudgeAssessment:
+def _parse_assessment(content: str) -> tuple[LLMJudgeAssessment, list[str]]:
     stripped = content.strip()
     candidates = [stripped]
     if stripped.startswith("```") and stripped.endswith("```"):
@@ -62,7 +63,13 @@ def _parse_assessment(content: str) -> LLMJudgeAssessment:
     last_error: Exception | None = None
     for candidate in candidates:
         try:
-            return LLMJudgeAssessment.model_validate_json(candidate)
+            payload = json.loads(candidate)
+            if not isinstance(payload, dict):
+                raise ValueError("Judge JSON 顶层必须是对象")
+            allowed = set(LLMJudgeAssessment.model_fields)
+            ignored_fields = sorted(set(payload) - allowed)
+            normalized = {key: value for key, value in payload.items() if key in allowed}
+            return LLMJudgeAssessment.model_validate(normalized), ignored_fields
         except Exception as exc:  # Pydantic 会提供可读的结构错误。
             last_error = exc
     raise ValueError(f"Judge 返回无效 JSON: {last_error}")
@@ -136,7 +143,7 @@ def judge_case(
         response = client.chat.completions.create(**request)
         prompt_tokens, completion_tokens, total_tokens = _usage(response)
         content = response.choices[0].message.content or ""
-        assessment = _parse_assessment(content)
+        assessment, ignored_fields = _parse_assessment(content)
         average_score = round((
             assessment.root_cause_completeness
             + assessment.failure_site_distinction
@@ -155,6 +162,7 @@ def judge_case(
             semantic_pass=semantic_pass,
             average_score=average_score,
             assessment=assessment,
+            ignored_fields=ignored_fields,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,

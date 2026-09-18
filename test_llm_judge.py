@@ -106,6 +106,20 @@ class LLMJudgeTests(unittest.TestCase):
         self.assertIn("无效 JSON", result.error or "")
         self.assertEqual(result.total_tokens, 160)
 
+    def test_unknown_top_level_field_is_ignored_and_recorded(self):
+        case = missing_user_case()
+        evaluation = score_case(case, fake_result(), ROOT)
+        payload = json.loads(assessment_json())
+        payload["confidence"] = "high"
+        client = FakeClient(json.dumps(payload, ensure_ascii=False))
+
+        result = judge_case(client, judge_config(), case, evaluation)
+
+        self.assertEqual(len(client.completions.calls), 1)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.ignored_fields, ["confidence"])
+        self.assertEqual(result.total_tokens, 160)
+
     def test_judge_cannot_override_deterministic_result(self):
         case = missing_user_case()
         failing_agent_result = fake_result(invalid_line=True)

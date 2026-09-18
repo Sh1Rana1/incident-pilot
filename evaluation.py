@@ -74,6 +74,7 @@ class LLMJudgeResult(StrictModel):
     average_score: float | None = None
     assessment: LLMJudgeAssessment | None = None
     error: str | None = None
+    ignored_fields: list[str] = Field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
