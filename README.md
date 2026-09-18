@@ -4,6 +4,8 @@ V14.1 增加了异步资料查询与订单支付重试两个离线故障案例�
 
 审计发现并修复了五处“评分术语在允许取证材料中缺少字面支撑”的数据质量问题：异步契约补充 `coroutine/await`，分页契约补充 `1-based`，支付契约补充“超时”，事务契约补充 `rollback`。没有改动 `graph.py`、评分器、冻结的 V13/V14.3 结果或任何 Case ID 专用调查规则。相同五案例、Profile、预算和模型下的历史单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
+正式审计在干净提交 `af1be13` 上完成：166/166 项检查通过，失败 0 项；十五个 Evaluation 按 development 5、hidden 7、challenge 2、runtime 1 唯一分组，十二个场景完成模块/脚本共 24 次预期故障复现，22/22 个 Harness Check 的当前行为符合用途，所有相关文档均进入本地索引并能从案例问题的前 8 条结果中发现，评分关键词缺少来源 0 项、RAG 漏检 0 项、受保护资产泄漏 0 项。V13 的两份原始基线和 V14.3 的一份原始报告均存在且 SHA-256 与冻结汇总一致；审计专项 70 项、全量 198 项离线测试及 `doctor` 均通过。完整报告为 `demo_app/evals/results/v14.7-deterministic-audit.json`，文件 SHA-256 为 `ee970f210ab7c802eafec2602266e382adf82881ac6d6bc124a510f16e4dd890`。
+
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
 本阶段补上所有 `test_*.py`、`checks`、Harness/Runtime 实现、Fixture 和 Eval 的文件工具隔离。三个直接写出旧案例根因和修复的事故文档已移除，业务代码中的答案式注释也已清理；Evaluation 改为引用正常的 API、数据库和 Runbook 契约。`_benchmark_manifest.json` 冻结开发、hidden、challenge 和 Runtime 集合，默认实验只选择 development。

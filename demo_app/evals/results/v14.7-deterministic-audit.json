@@ -1,0 +1,2250 @@
+{
+  "schema_version": 1,
+  "audit_version": "v14.7-deterministic",
+  "status": "passed_with_warnings",
+  "repository_commit": "af1be13f964f6900fef253a8330b4e783ce830f7",
+  "working_tree_dirty": false,
+  "benchmark_version": "v14.6",
+  "benchmark_manifest_sha256": "bd5715b1683e114403af9257eaa5bd97879eec029c4df5287a391b99f1badbcf",
+  "evaluation_cases_sha256": "db1a6ab9438ce8f9887a0b7f6f074a150b6cbf36ffce7fcf5b939d51f014fb5a",
+  "harness_manifest_sha256": "2be3b5fac01b94fed51486039ff481ebbc6140a65adeca9255ca7951679a0d62",
+  "summary": {
+    "case_count": 15,
+    "executable_case_count": 12,
+    "harness_check_count": 22,
+    "rag_chunk_count": 38,
+    "check_count": 166,
+    "passed_check_count": 166,
+    "failed_check_count": 0,
+    "warning_count": 2,
+    "process_reproduction_count": 24,
+    "harness_execution_count": 22
+  },
+  "split_counts": {
+    "development": 5,
+    "hidden": 7,
+    "challenge": 2,
+    "runtime": 1
+  },
+  "case_audits": [
+    {
+      "case_id": "missing_user_id",
+      "split": "development",
+      "base_case": "missing_user_id",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "user_id"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "schema_mismatch",
+      "split": "development",
+      "base_case": "schema_mismatch",
+      "executable": true,
+      "prompt_exposed_keywords": [],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "connection_leak",
+      "split": "development",
+      "base_case": "connection_leak",
+      "executable": true,
+      "prompt_exposed_keywords": [],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "async_missing_await",
+      "split": "development",
+      "base_case": "async_missing_await",
+      "executable": true,
+      "prompt_exposed_keywords": [],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "retry_non_idempotent",
+      "split": "development",
+      "base_case": "retry_non_idempotent",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "超时"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "documentation_required",
+      "split": "hidden",
+      "base_case": "documentation_required",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "timeout_seconds"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "timezone_mismatch",
+      "split": "hidden",
+      "base_case": "timezone_mismatch",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "时区"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "cache_key_version",
+      "split": "hidden",
+      "base_case": "cache_key_version",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "缓存",
+        "Key"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "pagination_off_by_one",
+      "split": "hidden",
+      "base_case": "pagination_off_by_one",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "分页"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "config_env_rename",
+      "split": "hidden",
+      "base_case": "config_env_rename",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "REQUEST_TIMEOUT_SECONDS",
+        "环境变量"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "transaction_rollback",
+      "split": "hidden",
+      "base_case": "transaction_rollback",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "事务",
+        "rollback"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "dependency_contract_change",
+      "split": "hidden",
+      "base_case": "dependency_contract_change",
+      "executable": true,
+      "prompt_exposed_keywords": [
+        "SDK",
+        "message"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "git_regression",
+      "split": "challenge",
+      "base_case": "connection_leak",
+      "executable": false,
+      "prompt_exposed_keywords": [],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "misleading_documentation",
+      "split": "challenge",
+      "base_case": "connection_leak",
+      "executable": false,
+      "prompt_exposed_keywords": [],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    },
+    {
+      "case_id": "runtime_required",
+      "split": "runtime",
+      "base_case": "documentation_required",
+      "executable": false,
+      "prompt_exposed_keywords": [
+        "timeout_seconds"
+      ],
+      "keyword_source_support": true,
+      "rag_discoverable": true,
+      "assets_valid": true,
+      "access_boundaries_valid": true,
+      "log_valid": true
+    }
+  ],
+  "process_reproductions": [
+    {
+      "case_id": "missing_user_id",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "missing_user_id",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "schema_mismatch",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "schema_mismatch",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "connection_leak",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "connection_leak",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "documentation_required",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "documentation_required",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "async_missing_await",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "async_missing_await",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "retry_non_idempotent",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "retry_non_idempotent",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "timezone_mismatch",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "timezone_mismatch",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "cache_key_version",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "cache_key_version",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "pagination_off_by_one",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "pagination_off_by_one",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "config_env_rename",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "config_env_rename",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "transaction_rollback",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "transaction_rollback",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "dependency_contract_change",
+      "entry": "module",
+      "exit_code": 1,
+      "expected_exception_found": true
+    },
+    {
+      "case_id": "dependency_contract_change",
+      "entry": "script",
+      "exit_code": 1,
+      "expected_exception_found": true
+    }
+  ],
+  "harness_executions": [
+    {
+      "check_id": "demo_async_missing_await",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "async_profile_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_retry_non_idempotent",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "payment_single_charge_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_timezone_mismatch",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "timezone_elapsed_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_cache_key_version",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "cache_key_version_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_pagination_off_by_one",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "pagination_page_number_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_config_env_rename",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "http_timeout_env_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_transaction_rollback",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "transaction_atomicity_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_dependency_contract_change",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "notification_sdk_v3_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    },
+    {
+      "check_id": "demo_missing_user_id",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "demo_schema_mismatch",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "demo_connection_leak",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "demo_documentation_required",
+      "purpose": "reproduction",
+      "exit_code": 1,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "demo_smoke_suite",
+      "purpose": "regression",
+      "exit_code": 0,
+      "expectation_met": true,
+      "expected_current_state": true
+    },
+    {
+      "check_id": "api_missing_fields_contract",
+      "purpose": "regression",
+      "exit_code": 1,
+      "expectation_met": false,
+      "expected_current_state": false
+    }
+  ],
+  "audit_test_suite": {
+    "exit_code": 0,
+    "test_count": 70
+  },
+  "frozen_results": [
+    {
+      "label": "v13",
+      "status": "valid",
+      "case_count": 5,
+      "passed_count": 1,
+      "source_reports": [
+        {
+          "file": "v14.1-development-20260918-020551.json",
+          "exists": true,
+          "sha256_matches": true
+        },
+        {
+          "file": "v14.1-development-20260918-023131.json",
+          "exists": true,
+          "sha256_matches": true
+        }
+      ]
+    },
+    {
+      "label": "v14.3-development",
+      "status": "valid",
+      "case_count": 5,
+      "passed_count": 3,
+      "source_reports": [
+        {
+          "file": "v14.1-development-20260918-215356.json",
+          "exists": true,
+          "sha256_matches": true
+        }
+      ]
+    }
+  ],
+  "unsupported_keywords": [],
+  "rag_misses": [],
+  "warnings": [
+    {
+      "code": "expected_exception_not_hard_gate",
+      "message": "expected_exception_mentioned 当前只记录指标，不参与通过条件；报告即使未说明异常类型也可能通过。"
+    },
+    {
+      "code": "partial_evidence_threshold",
+      "message": "当前代码 Evidence 硬门槛为 50%，列出多个必需文件的案例可能在只覆盖一半时通过。冻结历史结果沿用该规则，本次审计不改评分器。"
+    }
+  ],
+  "failed_checks": [],
+  "checks": [
+    {
+      "name": "manifest:benchmark_version",
+      "passed": true,
+      "details": {
+        "actual": "v14.6"
+      }
+    },
+    {
+      "name": "manifest:development:count",
+      "passed": true,
+      "details": {
+        "expected": 5,
+        "actual": 5
+      }
+    },
+    {
+      "name": "manifest:hidden:count",
+      "passed": true,
+      "details": {
+        "expected": 7,
+        "actual": 7
+      }
+    },
+    {
+      "name": "manifest:challenge:count",
+      "passed": true,
+      "details": {
+        "expected": 2,
+        "actual": 2
+      }
+    },
+    {
+      "name": "manifest:runtime:count",
+      "passed": true,
+      "details": {
+        "expected": 1,
+        "actual": 1
+      }
+    },
+    {
+      "name": "manifest:total_count",
+      "passed": true,
+      "details": {
+        "expected": 15,
+        "actual": 15
+      }
+    },
+    {
+      "name": "entrypoints:count",
+      "passed": true,
+      "details": {
+        "expected": 12,
+        "actual": 12
+      }
+    },
+    {
+      "name": "manifest:agent_baseline_commit_exists",
+      "passed": true,
+      "details": {
+        "commit": "8c804fb1658def12f5bece17af045a75d0e2bd95"
+      }
+    },
+    {
+      "name": "case:async_missing_await:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "async_missing_await",
+        "case_id": "async_missing_await"
+      }
+    },
+    {
+      "name": "case:cache_key_version:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "cache_key_version",
+        "case_id": "cache_key_version"
+      }
+    },
+    {
+      "name": "case:config_env_rename:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "config_env_rename",
+        "case_id": "config_env_rename"
+      }
+    },
+    {
+      "name": "case:connection_leak:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "connection_leak",
+        "case_id": "connection_leak"
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "dependency_contract_change",
+        "case_id": "dependency_contract_change"
+      }
+    },
+    {
+      "name": "case:documentation_required:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "documentation_required",
+        "case_id": "documentation_required"
+      }
+    },
+    {
+      "name": "case:git_regression:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "git_regression",
+        "case_id": "git_regression"
+      }
+    },
+    {
+      "name": "case:misleading_documentation:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "misleading_documentation",
+        "case_id": "misleading_documentation"
+      }
+    },
+    {
+      "name": "case:missing_user_id:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "missing_user_id",
+        "case_id": "missing_user_id"
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "pagination_off_by_one",
+        "case_id": "pagination_off_by_one"
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "retry_non_idempotent",
+        "case_id": "retry_non_idempotent"
+      }
+    },
+    {
+      "name": "case:runtime_required:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "runtime_required",
+        "case_id": "runtime_required"
+      }
+    },
+    {
+      "name": "case:schema_mismatch:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "schema_mismatch",
+        "case_id": "schema_mismatch"
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "timezone_mismatch",
+        "case_id": "timezone_mismatch"
+      }
+    },
+    {
+      "name": "case:transaction_rollback:filename_matches_id",
+      "passed": true,
+      "details": {
+        "filename": "transaction_rollback",
+        "case_id": "transaction_rollback"
+      }
+    },
+    {
+      "name": "case:missing_user_id:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/api.py",
+          "demo_app/app/service.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/api.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:missing_user_id:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:missing_user_id:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/api.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/database.md",
+          "demo_app/docs/runbook.md",
+          "knowledge/api.md"
+        ]
+      }
+    },
+    {
+      "name": "case:missing_user_id:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:missing_user_id:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/missing_user_id.log",
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "case:schema_mismatch:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/database.py",
+          "demo_app/app/repository.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/database.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:schema_mismatch:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:schema_mismatch:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/database.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/database.md",
+          "demo_app/docs/runbook.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:schema_mismatch:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:schema_mismatch:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/schema_mismatch.log",
+        "expected_exception": "sqlite3.OperationalError"
+      }
+    },
+    {
+      "name": "case:connection_leak:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/worker.py",
+          "demo_app/app/pool.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/runbook.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:connection_leak:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:connection_leak:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/runbook.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/integrations.md",
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/time-contract.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:connection_leak:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:connection_leak:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/connection_leak.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:async_missing_await:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/async_jobs.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/async-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:async_missing_await:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:async_missing_await:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/async-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/runbook.md",
+          "knowledge/database.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:async_missing_await:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:async_missing_await:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/async_missing_await.log",
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/retry_policy.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/payment-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/payment-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/client-migrations.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/integrations.md",
+          "demo_app/docs/pagination-contract.md",
+          "demo_app/docs/payment-contract.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/database.md"
+        ]
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:retry_non_idempotent:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/retry_non_idempotent.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:documentation_required:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/webhook.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/integrations.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:documentation_required:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:documentation_required:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/integrations.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/database.md",
+          "demo_app/docs/integrations.md",
+          "demo_app/docs/time-contract.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:documentation_required:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:documentation_required:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/webhook_timeout_policy.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/time_window.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/time-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/time-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/time-contract.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/api.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:timezone_mismatch:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/timezone_mismatch.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:cache_key_version:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/cache_store.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/cache-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:cache_key_version:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:cache_key_version:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/cache-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/database.md"
+        ]
+      }
+    },
+    {
+      "name": "case:cache_key_version:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:cache_key_version:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/cache_key_version.log",
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/pagination.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/pagination-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/pagination-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/client-migrations.md",
+          "demo_app/docs/integrations.md",
+          "demo_app/docs/pagination-contract.md",
+          "demo_app/docs/payment-contract.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:pagination_off_by_one:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/pagination_off_by_one.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:config_env_rename:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/settings.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/configuration-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:config_env_rename:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:config_env_rename:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/configuration-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/time-contract.md",
+          "knowledge/api.md",
+          "knowledge/database.md"
+        ]
+      }
+    },
+    {
+      "name": "case:config_env_rename:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:config_env_rename:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/config_env_rename.log",
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "case:transaction_rollback:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/transactions.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/transaction-contract.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:transaction_rollback:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:transaction_rollback:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/transaction-contract.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/pagination-contract.md",
+          "demo_app/docs/time-contract.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:transaction_rollback:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:transaction_rollback:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/transaction_rollback.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/notification_client.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/client-migrations.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/client-migrations.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/async-contract.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/client-migrations.md",
+          "demo_app/docs/integrations.md",
+          "knowledge/database.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:dependency_contract_change:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/dependency_contract_change.log",
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "case:git_regression:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/worker.py",
+          "demo_app/app/pool.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/runbook.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:git_regression:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:git_regression:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/runbook.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/archive/legacy-pool-guide.md",
+          "demo_app/docs/runbook.md",
+          "knowledge/api.md",
+          "knowledge/database.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:git_regression:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:git_regression:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/connection_leak.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:misleading_documentation:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/worker.py",
+          "demo_app/app/pool.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/archive/legacy-pool-guide.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:misleading_documentation:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:misleading_documentation:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/archive/legacy-pool-guide.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/archive/legacy-pool-guide.md",
+          "demo_app/docs/cache-contract.md",
+          "demo_app/docs/integrations.md",
+          "demo_app/docs/runbook.md",
+          "demo_app/docs/transaction-contract.md",
+          "knowledge/database.md"
+        ]
+      }
+    },
+    {
+      "name": "case:misleading_documentation:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:misleading_documentation:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/connection_leak.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "case:runtime_required:assets",
+      "passed": true,
+      "details": {
+        "evidence_files": [
+          "demo_app/app/webhook.py"
+        ],
+        "relevant_docs": [
+          "demo_app/docs/integrations.md"
+        ],
+        "keywords_unique": true,
+        "runtime_flag_valid": true
+      }
+    },
+    {
+      "name": "case:runtime_required:keyword_source_support",
+      "passed": true,
+      "details": {
+        "missing": []
+      }
+    },
+    {
+      "name": "case:runtime_required:rag_discoverability",
+      "passed": true,
+      "details": {
+        "expected": [
+          "demo_app/docs/integrations.md"
+        ],
+        "retrieved": [
+          "demo_app/docs/api.md",
+          "demo_app/docs/architecture.md",
+          "demo_app/docs/configuration-contract.md",
+          "demo_app/docs/database.md",
+          "demo_app/docs/integrations.md",
+          "knowledge/database.md",
+          "knowledge/troubleshooting.md"
+        ]
+      }
+    },
+    {
+      "name": "case:runtime_required:access_boundaries",
+      "passed": true,
+      "details": {
+        "code_readable": true,
+        "evaluation_blocked": true,
+        "docs_directly_blocked": true
+      }
+    },
+    {
+      "name": "case:runtime_required:log",
+      "passed": true,
+      "details": {
+        "path": "demo_app/logs/webhook_timeout_policy.log",
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "rag:all_relevant_documents_indexed",
+      "passed": true,
+      "details": {
+        "chunk_count": 38,
+        "cache_hit": true
+      }
+    },
+    {
+      "name": "isolation:protected_assets",
+      "passed": true,
+      "details": {
+        "protected_path_count": 34,
+        "blocked_reads": true,
+        "protected_listing_hidden": true,
+        "answer_search_hidden": true
+      }
+    },
+    {
+      "name": "harness:reproduction_mapping",
+      "passed": true,
+      "details": {
+        "target_count": 12,
+        "targets": [
+          "async_missing_await",
+          "cache_key_version",
+          "config_env_rename",
+          "connection_leak",
+          "dependency_contract_change",
+          "documentation_required",
+          "missing_user_id",
+          "pagination_off_by_one",
+          "retry_non_idempotent",
+          "schema_mismatch",
+          "timezone_mismatch",
+          "transaction_rollback"
+        ]
+      }
+    },
+    {
+      "name": "harness:total_count",
+      "passed": true,
+      "details": {
+        "expected": 22,
+        "actual": 22
+      }
+    },
+    {
+      "name": "harness:demo_async_missing_await:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/async_jobs.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/async_jobs.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_retry_non_idempotent:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/retry_policy.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/retry_policy.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_timezone_mismatch:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/time_window.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/time_window.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_cache_key_version:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/cache_store.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/cache_store.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_pagination_off_by_one:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/pagination.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/pagination.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_config_env_rename:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/settings.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/settings.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_transaction_rollback:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/transactions.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/transactions.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_dependency_contract_change:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/notification_client.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/notification_client.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_missing_user_id:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/api.py",
+          "demo_app/app/service.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/api.py",
+          "demo_app/app/service.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_schema_mismatch:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/repository.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/database.py",
+          "demo_app/app/repository.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_connection_leak:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/worker.py",
+          "demo_app/app/pool.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/worker.py",
+          "demo_app/app/pool.py"
+        ]
+      }
+    },
+    {
+      "name": "harness:demo_documentation_required:coverage",
+      "passed": true,
+      "details": {
+        "covers_files": [
+          "demo_app/app/webhook.py"
+        ],
+        "evidence_files": [
+          "demo_app/app/webhook.py"
+        ]
+      }
+    },
+    {
+      "name": "reproduction:missing_user_id:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:missing_user_id:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:schema_mismatch:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "sqlite3.OperationalError"
+      }
+    },
+    {
+      "name": "reproduction:schema_mismatch:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "sqlite3.OperationalError"
+      }
+    },
+    {
+      "name": "reproduction:connection_leak:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:connection_leak:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:documentation_required:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:documentation_required:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:async_missing_await:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "reproduction:async_missing_await:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "reproduction:retry_non_idempotent:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:retry_non_idempotent:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:timezone_mismatch:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:timezone_mismatch:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:cache_key_version:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:cache_key_version:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:pagination_off_by_one:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:pagination_off_by_one:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:config_env_rename:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:config_env_rename:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "KeyError"
+      }
+    },
+    {
+      "name": "reproduction:transaction_rollback:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:transaction_rollback:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "RuntimeError"
+      }
+    },
+    {
+      "name": "reproduction:dependency_contract_change:module",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "reproduction:dependency_contract_change:script",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expected_exception": "TypeError"
+      }
+    },
+    {
+      "name": "harness:demo_async_missing_await:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:async_profile_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_retry_non_idempotent:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:payment_single_charge_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_timezone_mismatch:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:timezone_elapsed_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_cache_key_version:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:cache_key_version_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_pagination_off_by_one:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:pagination_page_number_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_config_env_rename:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:http_timeout_env_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_transaction_rollback:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:transaction_atomicity_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_dependency_contract_change:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:notification_sdk_v3_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "harness:demo_missing_user_id:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:demo_schema_mismatch:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:demo_connection_leak:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:demo_documentation_required:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:demo_smoke_suite:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 0,
+        "expectation_met": true,
+        "expected_current_state": true
+      }
+    },
+    {
+      "name": "harness:api_missing_fields_contract:current_behavior",
+      "passed": true,
+      "details": {
+        "exit_code": 1,
+        "expectation_met": false,
+        "expected_current_state": false
+      }
+    },
+    {
+      "name": "tests:audit_regression_suite",
+      "passed": true,
+      "details": {
+        "exit_code": 0,
+        "test_count": 70
+      }
+    },
+    {
+      "name": "frozen_result:v13:exists",
+      "passed": true,
+      "details": {
+        "path": "C:\\Users\\114514\\Documents\\Codex\\2026-09-07\\referenced-chatgpt-conversation-this-is-an\\incident-pilot\\demo_app\\evals\\results\\v13-v14.1-development.json"
+      }
+    },
+    {
+      "name": "frozen_result:v13:v14.1-development-20260918-020551.json:sha256",
+      "passed": true,
+      "details": {
+        "expected": "3f8b2e938ae011a3ecd527e2acb7581ba2bcaeeeed1b72deadda08fa25bb3872",
+        "actual": "3f8b2e938ae011a3ecd527e2acb7581ba2bcaeeeed1b72deadda08fa25bb3872"
+      }
+    },
+    {
+      "name": "frozen_result:v13:v14.1-development-20260918-023131.json:sha256",
+      "passed": true,
+      "details": {
+        "expected": "fcce6c92413bce50cf911482f65f3a0372f54c0e3e8e6172dd1bff2557685825",
+        "actual": "fcce6c92413bce50cf911482f65f3a0372f54c0e3e8e6172dd1bff2557685825"
+      }
+    },
+    {
+      "name": "frozen_result:v14.3-development:exists",
+      "passed": true,
+      "details": {
+        "path": "C:\\Users\\114514\\Documents\\Codex\\2026-09-07\\referenced-chatgpt-conversation-this-is-an\\incident-pilot\\demo_app\\evals\\results\\v14.3-development.json"
+      }
+    },
+    {
+      "name": "frozen_result:v14.3-development:v14.1-development-20260918-215356.json:sha256",
+      "passed": true,
+      "details": {
+        "expected": "3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e",
+        "actual": "3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e"
+      }
+    }
+  ]
+}
