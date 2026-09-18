@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v14.9",
+  "recorded_at": "2026-09-19",
+  "protocol": {
+    "repository_commit": "e9700e16ebcdda389de4c939cf79be8d7206ad52",
+    "working_tree_dirty": false,
+    "agent_model": "deepseek-v4-flash",
+    "judge_model": "deepseek-v4-flash",
+    "output_mode": "json_object",
+    "strict_tools": true,
+    "temperature": "provider_default",
+    "profile_static": "full",
+    "profile_runtime": "full_runtime",
+    "runs_per_case": 1,
+    "max_steps": 8,
+    "max_model_calls": 10,
+    "max_tool_calls": 20,
+    "max_tools_per_step": 3,
+    "judge_calls_per_report": 1
+  },
+  "scoring_policy": {
+    "expected_exception_required": true,
+    "required_code_file_coverage": 1.0,
+    "root_cause_keyword_coverage": 1.0,
+    "citation_validity": 1.0,
+    "evidence_grounding": 1.0,
+    "claim_coverage": 1.0,
+    "judge_is_deterministic_pass_gate": false
+  },
+  "judge_smoke": {
+    "case_id": "missing_user_id",
+    "report": ".incident_reports/baselines/v14.9-judge-smoke-fixed/v14.9-development-20260919-015439.json",
+    "sha256": "4cac3a16fae75555cd7bf4fa19196f6d5557df373b168a3c52ebfb3a9022d59f",
+    "deterministic_pass": true,
+    "judge_attempt_count": 1,
+    "judge_completed_count": 1,
+    "judge_error_count": 0,
+    "judge_semantic_pass_count": 1,
+    "judge_scores": {
+      "root_cause_completeness": 5,
+      "failure_site_distinction": 5,
+      "fix_actionability": 5,
+      "omission_severity": "none"
+    },
+    "judge_prompt_tokens": 1453,
+    "judge_completion_tokens": 556,
+    "judge_total_tokens": 2009,
+    "agent_model_calls": 10,
+    "ignored_fields": []
+  },
+  "judge_compatibility_incident": {
+    "report": ".incident_reports/baselines/v14.9-judge-smoke/v14.9-development-20260919-014934.json",
+    "sha256": "b8fc473fa2bad5a2c9d4ab1199bab72d4cf2293046c5ac88eab593d2ce144659",
+    "symptom": "DeepSeek added an unknown confidence field and the strict parser recorded status=error.",
+    "preserved_judge_tokens": 1860,
+    "resolution": "Unknown top-level fields are now discarded and listed in ignored_fields; required fields, types and score ranges remain strict, with no retry."
+  },
+  "source_reports": [
+    {
+      "split": "development",
+      "path": ".incident_reports/baselines/v14.9-formal-development-judge/v14.9-development-20260919-015951.json",
+      "sha256": "45f6e7be2dcc4115e5c16c03a7ab47a42cb7e0098292e4f486a8015398585749",
+      "evaluation_cases_sha256": "22600c16f0ebaa997617bcfc29f18c2ac6d8dcb2b286ef4572b79322aeadb324"
+    },
+    {
+      "split": "hidden",
+      "path": ".incident_reports/baselines/v14.9-formal-hidden-judge/v14.9-hidden-20260919-020711.json",
+      "sha256": "d90e8d4d9129022ae5251dc18f6bf8fd014ea8a98e3e921c6dfbcaccc61624c8",
+      "evaluation_cases_sha256": "922ecc190ec199097805e0cdf7420ac5d0afa6e26cc1d8f9190939133053761f"
+    },
+    {
+      "split": "runtime",
+      "path": ".incident_reports/baselines/v14.9-formal-runtime-judge/v14.9-runtime-20260919-020834.json",
+      "sha256": "f758b9fdc579056526f3bd539db139e5a892ab07761822d184990449d5fac9f0",
+      "evaluation_cases_sha256": "87227329b8916405cfdd7e69a0cc4e4868da4fc7cfa9653b20f3f782fb659c88"
+    }
+  ],
+  "split_results": [
+    {
+      "split": "development",
+      "attempts": 5,
+      "deterministic_passed": 5,
+      "deterministic_pass_rate": 1.0,
+      "average_root_cause_keyword_rate": 1.0,
+      "average_required_code_file_rate": 1.0,
+      "average_relevant_doc_rate": 0.4,
+      "average_citation_validity_rate": 1.0,
+      "average_evidence_grounded_rate": 1.0,
+      "average_claim_coverage_rate": 1.0,
+      "average_observation_utilization_rate": 0.6565,
+      "agent_model_calls": 40,
+      "tool_calls": 61,
+      "agent_tokens": 236204,
+      "duration_ms": 231880.85,
+      "format_repairs": 2,
+      "fallbacks": 0,
+      "judge_attempted": 5,
+      "judge_completed": 5,
+      "judge_errors": 0,
+      "judge_semantic_passed": 4,
+      "judge_semantic_pass_rate": 0.8,
+      "judge_tokens": 12319
+    },
+    {
+      "split": "hidden",
+      "attempts": 7,
+      "deterministic_passed": 4,
+      "deterministic_pass_rate": 0.5714,
+      "average_root_cause_keyword_rate": 0.9048,
+      "average_required_code_file_rate": 1.0,
+      "average_relevant_doc_rate": 0.7143,
+      "average_citation_validity_rate": 1.0,
+      "average_evidence_grounded_rate": 1.0,
+      "average_claim_coverage_rate": 1.0,
+      "average_observation_utilization_rate": 0.664,
+      "agent_model_calls": 60,
+      "tool_calls": 91,
+      "agent_tokens": 335935,
+      "duration_ms": 325320.31,
+      "format_repairs": 2,
+      "fallbacks": 0,
+      "judge_attempted": 7,
+      "judge_completed": 7,
+      "judge_errors": 0,
+      "judge_semantic_passed": 7,
+      "judge_semantic_pass_rate": 1.0,
+      "judge_tokens": 20353
+    },
+    {
+      "split": "runtime",
+      "attempts": 1,
+      "deterministic_passed": 1,
+      "deterministic_pass_rate": 1.0,
+      "average_root_cause_keyword_rate": 1.0,
+      "average_required_code_file_rate": 1.0,
+      "average_relevant_doc_rate": 1.0,
+      "average_citation_validity_rate": 1.0,
+      "average_evidence_grounded_rate": 1.0,
+      "average_claim_coverage_rate": 1.0,
+      "average_observation_utilization_rate": 0.6,
+      "agent_model_calls": 6,
+      "tool_calls": 8,
+      "agent_tokens": 30032,
+      "duration_ms": 27217.46,
+      "format_repairs": 1,
+      "fallbacks": 0,
+      "runtime_calls": 1,
+      "successful_runtime_calls": 1,
+      "runtime_evidence_count": 1,
+      "judge_attempted": 1,
+      "judge_completed": 1,
+      "judge_errors": 0,
+      "judge_semantic_passed": 1,
+      "judge_semantic_pass_rate": 1.0,
+      "judge_tokens": 2018
+    }
+  ],
+  "aggregate": {
+    "formal_attempts": 13,
+    "static_attempts": 12,
+    "static_deterministic_passed": 9,
+    "static_deterministic_pass_rate": 0.75,
+    "all_deterministic_passed": 10,
+    "all_deterministic_pass_rate": 0.7692,
+    "average_root_cause_keyword_rate": 0.9487,
+    "average_required_code_file_rate": 1.0,
+    "average_relevant_doc_rate": 0.6154,
+    "average_citation_validity_rate": 1.0,
+    "average_evidence_grounded_rate": 1.0,
+    "average_claim_coverage_rate": 1.0,
+    "total_provenance_violations": 0,
+    "average_observation_utilization_rate": 0.6562,
+    "agent_model_calls": 106,
+    "judge_model_calls": 13,
+    "total_model_service_calls": 119,
+    "tool_calls": 160,
+    "agent_tokens": 602171,
+    "judge_tokens": 34690,
+    "combined_tokens": 636861,
+    "duration_ms": 584418.62,
+    "format_repairs": 5,
+    "fallbacks": 0,
+    "repeated_tool_calls": 4,
+    "unreferenced_successful_observations": 35,
+    "early_stops": 5,
+    "runtime_calls": 1,
+    "successful_runtime_calls": 1,
+    "judge_attempted": 13,
+    "judge_completed": 13,
+    "judge_errors": 0,
+    "judge_semantic_passed": 12,
+    "judge_semantic_pass_rate": 0.9231,
+    "average_judge_root_cause_completeness": 4.9231,
+    "average_judge_failure_site_distinction": 5.0,
+    "average_judge_fix_actionability": 5.0
+  },
+  "deterministic_failures": [
+    {
+      "case_id": "config_env_rename",
+      "reasons": ["missing_root_cause_keywords:环境变量"]
+    },
+    {
+      "case_id": "documentation_required",
+      "reasons": ["missing_expected_exception:RuntimeError"],
+      "validation_notes": [
+        "The generated high-confidence report lacked a confirmed hypothesis.",
+        "The format-repair output contained trailing characters and was rejected."
+      ]
+    },
+    {
+      "case_id": "pagination_off_by_one",
+      "reasons": ["missing_root_cause_keywords:1-based"]
+    }
+  ],
+  "semantic_failures": [
+    {
+      "case_id": "async_missing_await",
+      "root_cause_completeness": 4,
+      "failure_site_distinction": 5,
+      "fix_actionability": 5,
+      "omission_severity": "major",
+      "summary": "The report did not inspect the concrete caller and subscript failure site, so the missing await remained partly inferred."
+    }
+  ],
+  "limitations": [
+    "Each case was run once; these results are not a stability estimate.",
+    "Agent and Judge used the same model, so semantic scores are not independent.",
+    "Provider-default temperature was used because the service configuration does not expose a fixed deterministic seed.",
+    "Hidden results were recorded without tuning or rerunning failed cases.",
+    "Judge scores never override deterministic pass or fail decisions."
+  ]
+}

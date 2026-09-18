@@ -1,10 +1,16 @@
-# IncidentPilot V14.8 · Optional LLM Judge
+# IncidentPilot V14.9 · Strict Evaluation & LLM Judge
 
 V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge；V14.9 将异常类型和全部必需代码文件覆盖提升为确定性硬门槛，并据此生成最终正式数据。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
 
 LLM Judge 是旁路语义评分，不是新的通过门槛：本地确定性评测仍独占引用真实性、Evidence 落地、Claim 覆盖、Runtime 要求和最终 `passed`。Judge 每份最终报告最多调用一次，不使用工具、不读取 Observation 来源、不自动重试或格式修复；高分不能挽救确定性失败，低分也不能撤销确定性通过。`ENABLE_LLM_JUDGE=false` 且未传 `--judge` 时，现有 Evaluation 的调用次数和费用完全不变。
 
 2026-09-19 的首次同模型真实烟雾验收使用 `deepseek-v4-flash` 运行 `missing_user_id + full + judge`：确定性评测 1/1，根因、代码、文档、引用、Evidence 与 Claim 覆盖均为 100%，Provenance 违规、格式修复和 fallback 均为 0；Judge 完成 1/1、错误 0、语义通过 1/1，三项评分均为 5/5，额外消耗 1,922 Token。Agent 使用 9 次模型请求、15 次工具调用和 65,417 Token，Judge 后总计约 67,339 Token，耗时 74.18 秒。报告完整区分 Service 的 `KeyError` failure site 与 API 入口校验根因，但没有提前结束，发生一次 31 行定向读取失败并留下两条未引用成功 Observation；同模型满分只能证明协议兼容和本次语义评价，不能证明 Judge 独立性或成本稳定改善。原始报告 `.incident_reports/eval-20260919-011548.json` 的 SHA-256 为 `0482a63b3c62668dfd066e3c6edbb9e2cf060cac8c1ac55ca3c76d17e7712bf5`。
+
+V14.9 在更严格评分口径下重新完成真实 Judge 烟雾验收。首次请求中 DeepSeek 附加了 Schema 外的 `confidence`，系统按设计保存 `status=error` 和已经产生的 1,860 Token，未重试；修复后仅重跑一次，确定性 1/1、Judge 尝试/完成 1/1、错误 0、三项 5/5、遗漏 none，Judge Token 2,009。兼容修复只丢弃并记录未知顶层字段，六个必需字段、类型与分值范围仍严格校验。成功报告 SHA-256 为 `4cac3a16fae75555cd7bf4fa19196f6d5557df373b168a3c52ebfb3a9022d59f`。
+
+正式 V14.9 评测固定 `deepseek-v4-flash`、每例一次、静态 `full`、Runtime `full_runtime`、provider default temperature，并在干净提交 `e9700e1` 上串行完成。development 为 5/5（100%），hidden 为 4/7（57.14%），Runtime 为 1/1；静态合计 9/12（75%），含 Runtime 共 10/13（76.92%）。13 份报告的必需代码、引用真实性、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规为 0；平均根因关键词覆盖 94.87%、文档覆盖 61.54%、Observation 利用率 65.62%。Agent 共 106 次模型请求、160 次工具调用、602,171 Token；Judge 恰好 13 次请求，完成 13/13、错误 0、语义通过 12/13（92.31%），消耗 34,690 Token；合计 636,861 Token、584.42 秒。格式修复 5 次、fallback 0 次、重复工具调用 4 次。
+
+三个 hidden 确定性失败保持原判：`config_env_rename` 漏写要求的“环境变量”，`pagination_off_by_one` 漏写 `1-based`，`documentation_required` 未明确写 `RuntimeError`，且其高置信度报告缺少 confirmed 假设、格式修复仍有尾随字符。唯一 Judge 语义失败是 `async_missing_await`：确定性规则通过，但 Judge 认为未读取具体调用方和下标访问报错点，遗漏为 major。Judge 与 Agent 使用同一模型，因此语义分数不是独立复核；每例仅一次，也不能当作稳定性结论。原始报告均不可覆盖，汇总与三个 SHA-256 固化在 `demo_app/evals/results/v14.9-formal-evaluation.json`。
 
 审计发现并修复了五处“评分术语在允许取证材料中缺少字面支撑”的数据质量问题：异步契约补充 `coroutine/await`，分页契约补充 `1-based`，支付契约补充“超时”，事务契约补充 `rollback`。没有改动 `graph.py`、评分器、冻结的 V13/V14.3 结果或任何 Case ID 专用调查规则。相同五案例、Profile、预算和模型下的历史单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
@@ -1468,7 +1474,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 208 项测试，覆盖：
+当前共有 209 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
 - LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；
@@ -1739,8 +1745,8 @@ ModuleNotFoundError: No module named 'langgraph'
 
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
 2. Expanded Benchmark 已达到十二个可执行场景；十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离、关键词来源和冻结结果哈希已纳入 V14.7 完整确定性审计；
-3. V14.8 已加入默认关闭、每份报告只调用一次的旁路 LLM Judge，并完成同模型单案例真实烟雾验收；下一步决定是否用独立 Judge 模型评审 hidden set，且始终不替代本地引用真实性判断；
-4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
+3. V14.8/V14.9 已完成默认关闭的单次 LLM Judge、同模型烟雾验收以及 development 5、hidden 7、Runtime 1 的正式单次评测；未来如需更强结论，应改用独立 Judge 模型并增加重复次数，而不是覆盖当前结果；
+4. 下一步补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。
 

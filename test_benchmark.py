@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 CASES_DIR = ROOT / "demo_app" / "evals"
 MANIFEST_PATH = CASES_DIR / "_benchmark_manifest.json"
 BASELINE_SUMMARY_PATH = CASES_DIR / "results" / "v13-v14.1-development.json"
+FORMAL_SUMMARY_PATH = CASES_DIR / "results" / "v14.9-formal-evaluation.json"
 
 
 class BenchmarkManifestTests(unittest.TestCase):
@@ -110,6 +111,36 @@ class BenchmarkManifestTests(unittest.TestCase):
         self.assertEqual(baseline["source_audit"]["forbidden_paths_found"], [])
         self.assertTrue(all(
             len(item["sha256"]) == 64 for item in baseline["source_reports"]
+        ))
+
+    def test_v149_formal_summary_is_internally_consistent(self):
+        summary = json.loads(FORMAL_SUMMARY_PATH.read_text(encoding="utf-8"))
+        splits = summary["split_results"]
+        aggregate = summary["aggregate"]
+
+        self.assertEqual(summary["benchmark_version"], "v14.9")
+        self.assertEqual(
+            {item["split"] for item in splits},
+            {"development", "hidden", "runtime"},
+        )
+        self.assertEqual(
+            sum(item["attempts"] for item in splits),
+            aggregate["formal_attempts"],
+        )
+        self.assertEqual(
+            sum(item["deterministic_passed"] for item in splits),
+            aggregate["all_deterministic_passed"],
+        )
+        self.assertEqual(
+            sum(item["judge_attempted"] for item in splits),
+            aggregate["judge_attempted"],
+        )
+        self.assertEqual(aggregate["judge_attempted"], 13)
+        self.assertEqual(aggregate["judge_completed"], 13)
+        self.assertEqual(aggregate["judge_errors"], 0)
+        self.assertEqual(aggregate["successful_runtime_calls"], 1)
+        self.assertTrue(all(
+            len(item["sha256"]) == 64 for item in summary["source_reports"]
         ))
 
     def test_benchmark_implementation_is_hidden_from_agent_file_tools(self):

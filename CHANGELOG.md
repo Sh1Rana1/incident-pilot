@@ -20,6 +20,11 @@
 - 新增两项评分回归测试，并让确定性审计直接验证两项硬门槛。V14.7 报告和 V13/V14.3 冻结结果保持原样，不回算历史分数。
 - Benchmark 版本升为 `v14.9`。正式 development、hidden、Runtime 与 LLM Judge 数据将在相同提交、固定 Profile 和每例一次的条件下分别保存，结果只按真实运行记录。
 - V14.9 首次真实 Judge 烟雾发现 DeepSeek 在要求字段之外附加 `confidence`，严格模型因此保存为 error。解析器现在确定性丢弃并记录未知顶层字段，仍严格校验六个必需字段、类型和分值范围，不增加重试；新增对应回归测试。
+- 修复后真实烟雾为确定性 1/1、Judge 完成 1/1、错误 0、语义通过 1/1，三项均 5/5，Judge Token 2,009；原始 JSON 记录干净提交 `e9700e1`，SHA-256 为 `4cac3a16fae75555cd7bf4fa19196f6d5557df373b168a3c52ebfb3a9022d59f`。
+- 正式 development 5、hidden 7 和 Runtime 1 均在同一干净提交、固定 Profile、每例一次且开启同模型 Judge 的条件下串行完成。确定性结果分别为 5/5、4/7、1/1，静态合计 9/12，全部合计 10/13；必需代码、引用、Evidence 与 Claim 覆盖均为 100%，Provenance 违规 0。三个 hidden 失败和一个 Judge 语义失败均保留原判，没有调参或重跑挑样本。
+- 13 次正式 Judge 全部返回合法结构且错误 0，语义通过 12/13；Agent/Judge Token 分别为 602,171/34,690，合计 636,861，模型服务请求为 106+13，工具调用 160，总耗时 584.42 秒。该结果是同模型、provider default temperature、每例一次的小样本，不外推稳定性或独立 Judge 一致性。
+- 新增不可变正式汇总 `demo_app/evals/results/v14.9-formal-evaluation.json`，引用 development、hidden、Runtime 三份原始 baseline JSON 的路径、数据集摘要与 SHA-256；原始保存层继续拒绝覆盖已有文件。
+- 新增正式汇总内部一致性回归，校验三组案例数、确定性通过数、Judge 次数和来源哈希字段；完整离线测试增至 209 项。
 
 ---
 
