@@ -4,6 +4,8 @@ V14.1 增加了异步资料查询与订单支付重试两个离线故障案例�
 
 LLM Judge 是旁路语义评分，不是新的通过门槛：本地确定性评测仍独占引用真实性、Evidence 落地、Claim 覆盖、Runtime 要求和最终 `passed`。Judge 每份最终报告最多调用一次，不使用工具、不读取 Observation 来源、不自动重试或格式修复；高分不能挽救确定性失败，低分也不能撤销确定性通过。`ENABLE_LLM_JUDGE=false` 且未传 `--judge` 时，现有 Evaluation 的调用次数和费用完全不变。
 
+2026-09-19 的首次同模型真实烟雾验收使用 `deepseek-v4-flash` 运行 `missing_user_id + full + judge`：确定性评测 1/1，根因、代码、文档、引用、Evidence 与 Claim 覆盖均为 100%，Provenance 违规、格式修复和 fallback 均为 0；Judge 完成 1/1、错误 0、语义通过 1/1，三项评分均为 5/5，额外消耗 1,922 Token。Agent 使用 9 次模型请求、15 次工具调用和 65,417 Token，Judge 后总计约 67,339 Token，耗时 74.18 秒。报告完整区分 Service 的 `KeyError` failure site 与 API 入口校验根因，但没有提前结束，发生一次 31 行定向读取失败并留下两条未引用成功 Observation；同模型满分只能证明协议兼容和本次语义评价，不能证明 Judge 独立性或成本稳定改善。原始报告 `.incident_reports/eval-20260919-011548.json` 的 SHA-256 为 `0482a63b3c62668dfd066e3c6edbb9e2cf060cac8c1ac55ca3c76d17e7712bf5`。
+
 审计发现并修复了五处“评分术语在允许取证材料中缺少字面支撑”的数据质量问题：异步契约补充 `coroutine/await`，分页契约补充 `1-based`，支付契约补充“超时”，事务契约补充 `rollback`。没有改动 `graph.py`、评分器、冻结的 V13/V14.3 结果或任何 Case ID 专用调查规则。相同五案例、Profile、预算和模型下的历史单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
 正式审计在干净提交 `af1be13` 上完成：166/166 项检查通过，失败 0 项；十五个 Evaluation 按 development 5、hidden 7、challenge 2、runtime 1 唯一分组，十二个场景完成模块/脚本共 24 次预期故障复现，22/22 个 Harness Check 的当前行为符合用途，所有相关文档均进入本地索引并能从案例问题的前 8 条结果中发现，评分关键词缺少来源 0 项、RAG 漏检 0 项、受保护资产泄漏 0 项。V13 的两份原始基线和 V14.3 的一份原始报告均存在且 SHA-256 与冻结汇总一致；审计专项 70 项、全量 198 项离线测试及 `doctor` 均通过。完整报告为 `demo_app/evals/results/v14.7-deterministic-audit.json`，文件 SHA-256 为 `ee970f210ab7c802eafec2602266e382adf82881ac6d6bc124a510f16e4dd890`。
@@ -1466,7 +1468,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 204 项测试，覆盖：
+当前共有 205 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
 - LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；
@@ -1556,7 +1558,14 @@ ExperimentRun
 .\.venv\Scripts\python.exe benchmark.py
 ```
 
-该命令不调用模型。它会检查十五个 Evaluation 的集合划分、可见证据与评分关键词、RAG 文档、日志、文件工具隔离、十二个复现入口与二十二个 Harness Check，并验证冻结基线原始报告的 SHA-256；默认还会以模块和脚本两种方式执行十二个故障入口、运行全部 Harness Check 和审计专项回归。结果写入 `demo_app/evals/results/v14.7-deterministic-audit.json`。如只需快速检查静态结构，可添加 `--skip-processes`。
+该命令不调用模型。它会检查十五个 Evaluation 的集合划分、可见证据与评分关键词、RAG 文档、日志、文件工具隔离、十二个复现入口与二十二个 Harness Check，并验证冻结基线原始报告的 SHA-256；默认还会以模块和脚本两种方式执行十二个故障入口、运行全部 Harness Check 和审计专项回归。默认结果写入被 Git 忽略的 `.incident_reports/audits/deterministic-audit-<时间戳>.json`，不会再覆盖已经提交的历史审计；任何显式 `--output` 目标如果已存在也会被拒绝。如只需快速检查静态结构，可添加 `--skip-processes`。
+
+需要发布新的正式审计快照时，显式指定一个尚不存在的版本化文件名，核验后再提交：
+
+```powershell
+.\.venv\Scripts\python.exe benchmark.py `
+  --output demo_app/evals/results/v14.8-deterministic-audit.json
+```
 
 审计状态允许 `passed_with_warnings`：这表示所有完整性检查均通过，但报告明确保留评分策略风险。当前已知两项是 `expected_exception` 尚未作为硬通过门槛，以及多 Evidence 文件案例的代码覆盖硬阈值仍为 50%。为保持冻结历史结果可比较，V14.7 只报告风险，不在同一阶段修改评分口径。
 
@@ -1730,7 +1739,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
 2. Expanded Benchmark 已达到十二个可执行场景；十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离、关键词来源和冻结结果哈希已纳入 V14.7 完整确定性审计；
-3. V14.8 已加入默认关闭、每份报告只调用一次的旁路 LLM Judge；下一步先用同模型单案例烟雾验证协议，再决定是否用独立 Judge 模型评审 hidden set，且始终不替代本地引用真实性判断；
+3. V14.8 已加入默认关闭、每份报告只调用一次的旁路 LLM Judge，并完成同模型单案例真实烟雾验收；下一步决定是否用独立 Judge 模型评审 hidden set，且始终不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。

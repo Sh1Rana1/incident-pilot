@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -19,9 +20,6 @@ BenchmarkSplit = Literal["development", "hidden", "challenge", "runtime", "all"]
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CASES_DIR = PROJECT_ROOT / "demo_app" / "evals"
 DEFAULT_MANIFEST_PATH = DEFAULT_CASES_DIR / "_benchmark_manifest.json"
-DEFAULT_AUDIT_OUTPUT = (
-    DEFAULT_CASES_DIR / "results" / "v14.7-deterministic-audit.json"
-)
 EXPECTED_SPLIT_COUNTS = {
     "development": 5,
     "hidden": 7,
@@ -623,7 +621,7 @@ def run_deterministic_audit(
     dirty = _git(root, "status", "--porcelain", "--untracked-files=all")
     return {
         "schema_version": 1,
-        "audit_version": "v14.7-deterministic",
+        "audit_version": "v14.8-deterministic",
         "status": status,
         "repository_commit": head.stdout.strip() if head.returncode == 0 else None,
         "working_tree_dirty": bool(dirty.stdout.strip()),
@@ -662,10 +660,23 @@ def run_deterministic_audit(
 
 
 def save_deterministic_audit(report: dict, output_path: Path) -> None:
+    if output_path.exists():
+        raise FileExistsError(f"拒绝覆盖已有审计报告: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+    )
+
+
+def default_audit_output(
+    project_root: Path = PROJECT_ROOT,
+    timestamp: str | None = None,
+) -> Path:
+    stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    return (
+        project_root / ".incident_reports" / "audits" /
+        f"deterministic-audit-{stamp}.json"
     )
 
 
@@ -676,8 +687,10 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_AUDIT_OUTPUT,
-        help="JSON 审计报告路径",
+        help=(
+            "JSON 审计报告路径；默认写入被 Git 忽略且带时间戳的 "
+            ".incident_reports/audits/"
+        ),
     )
     parser.add_argument(
         "--skip-processes",
@@ -685,14 +698,17 @@ def main() -> int:
         help="只检查静态结构，不执行 Demo、Harness 和专项测试",
     )
     arguments = parser.parse_args()
-    output = arguments.output
+    output = arguments.output or default_audit_output(PROJECT_ROOT)
     if not output.is_absolute():
         output = PROJECT_ROOT / output
     report = run_deterministic_audit(
         PROJECT_ROOT,
         execute_processes=not arguments.skip_processes,
     )
-    save_deterministic_audit(report, output)
+    try:
+        save_deterministic_audit(report, output)
+    except FileExistsError as exc:
+        raise SystemExit(str(exc)) from exc
     summary = report["summary"]
     print(
         "Benchmark 确定性审计："

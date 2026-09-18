@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from benchmark import (
+    default_audit_output,
     evaluation_digest,
     load_benchmark_manifest,
     run_deterministic_audit,
@@ -144,8 +145,22 @@ class BenchmarkManifestTests(unittest.TestCase):
             output = Path(temporary_directory) / "audit.json"
             save_deterministic_audit(report, output)
             saved = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual(saved["audit_version"], "v14.7-deterministic")
+        self.assertEqual(saved["audit_version"], "v14.8-deterministic")
         self.assertEqual(saved["status"], "passed_with_warnings")
+
+    def test_default_audit_output_is_ignored_and_existing_report_is_immutable(self):
+        output = default_audit_output(ROOT, "20260919-020000")
+        self.assertEqual(
+            output,
+            ROOT / ".incident_reports" / "audits" /
+            "deterministic-audit-20260919-020000.json",
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            existing = Path(temporary_directory) / "audit.json"
+            existing.write_text("original", encoding="utf-8")
+            with self.assertRaisesRegex(FileExistsError, "拒绝覆盖"):
+                save_deterministic_audit({"status": "passed"}, existing)
+            self.assertEqual(existing.read_text(encoding="utf-8"), "original")
 
 
 if __name__ == "__main__":

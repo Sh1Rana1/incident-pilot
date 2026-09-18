@@ -20,7 +20,9 @@
 - `run_evals.py` 新增 `--judge`；同时要求 `ENABLE_LLM_JUDGE=true`，超过三份报告还需 `--yes`。未启用时既有 Evaluation 不增加任何请求。终端和 JSON 新增 Judge 完成/错误数、语义通过率、三项平均分和独立 Token 统计。
 - 默认复用 `API_KEY/BASE_URL/MODEL`；可通过 `JUDGE_API_KEY/JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_OUTPUT_MODE` 切换独立 OpenAI-compatible Judge。创建 Judge 客户端时关闭 SDK 自动重试，确保应用层一份报告只有一次请求。
 - `llm_judge.py` 加入 Agent 文件工具和 Patch Proposal 保护清单；`doctor` 只显示 Judge 开关与模型名，不输出任何密钥。`api.env.example`、README 和实验元数据同步更新。
-- 新增六项离线测试，覆盖同服务默认配置、独立模型覆盖、单次无工具请求、结构化分数、无效 JSON 不重试、双向硬门槛隔离、终端聚合及 Judge 费用保护；完整 204 项测试、`doctor` 和 119 项静态确定性审计全部通过。用当前 `judge=off` 配置实测 `--judge` 会在 Agent 调用前退出；本阶段未调用真实模型。
+- 新增六项离线测试，覆盖同服务默认配置、独立模型覆盖、单次无工具请求、结构化分数、无效 JSON 不重试、双向硬门槛隔离、终端聚合及 Judge 费用保护；实现阶段的完整 204 项测试、`doctor` 和 119 项静态确定性审计全部通过。用 `judge=off` 配置实测 `--judge` 会在 Agent 调用前退出；这些实现验证未调用真实模型，随后才进行下述单案例烟雾验收。
+- 首次同模型真实验收 `missing_user_id + full + judge` 确定性评测 1/1，所有根因/证据指标均为 100%，Provenance 违规、格式修复和 fallback 为 0；Judge 完成 1/1、语义通过 1/1、三项均为 5/5，额外 1,922 Token。Agent 使用 9 次模型请求、15 次工具调用、65,417 Token 和 74.18 秒；没有早停，发生一次超出 30 行上限的读取失败，并留下两条未引用成功 Observation，因此不宣称成本稳定改善。同模型评价可能偏好自身输出，本次只作为接口与协议验收。原始报告 SHA-256 为 `0482a63b3c62668dfd066e3c6edbb9e2cf060cac8c1ac55ca3c76d17e7712bf5`。
+- 修复确定性审计默认覆盖已提交 V14.7 报告的问题。`benchmark.py` 现在默认写入被 Git 忽略且带时间戳的 `.incident_reports/audits/`，显式输出也拒绝覆盖已有文件；历史 V14.7 报告保持原哈希，新生成的 V14.8 审计副本已保存在忽略目录。新增一项回归测试，完整测试增至 205 项。
 
 ---
 
