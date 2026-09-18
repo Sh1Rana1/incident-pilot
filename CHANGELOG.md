@@ -13,6 +13,17 @@
 
 ---
 
+## V14.7：完整确定性审计（2026-09-19）
+
+- `benchmark.py` 新增一键确定性审计与 JSON 报告：检查十五个 Evaluation 的唯一划分、文件名与 Case ID、资产存在性、Runtime 标记、评分关键词来源、RAG 可发现性、错误日志、Agent 文件边界、十二个复现入口和二十二个 Harness Check 的映射。
+- 完整模式以模块和脚本两种入口执行十二个故障场景，运行全部预登记 Harness Check 及审计专项测试；同时验证 V13/V14.3 冻结汇总引用的原始报告 SHA-256。审计不创建模型客户端，不读取真实 API Key，不产生 Token 费用。
+- 新增 `--skip-processes` 快速静态模式；默认报告写入 `demo_app/evals/results/v14.7-deterministic-audit.json`。失败检查、逐案例状态、进程退出码、Harness 结果、冻结报告校验和策略警告均以结构化字段保存。
+- 审计发现五处允许取证材料与字面评分关键词的对齐缺口；在业务契约中补充 `coroutine/await`、`1-based`、超时与 `rollback` 术语。没有修改故障实现、Evaluation 关键词、评分阈值、Agent 控制流或冻结的正式对照数据。
+- 新增两项回归测试，验证完整静态审计无失败项及报告可持久化；完整离线测试由 196 项增至 198 项。
+- 两项评分策略风险保持显式警告而不是伪装为通过：`expected_exception` 指标尚未进入硬通过条件，多 Evidence 文件案例的代码覆盖硬阈值仍为 50%。V14.7 为保持历史可比性不改变评分口径，后续需单独版本化处理。
+
+---
+
 ## V14.6：Expanded Benchmark 最终批（2026-09-19）
 
 - 保持 `graph.py`、Prompt、模型与工具预算、评分器、五个 development 案例及正式对照结果不变，新增 `transaction_rollback` 与 `dependency_contract_change` 两个 hidden 案例；Benchmark 版本升为 `v14.6`，达到十二个可执行场景、十五个 Evaluation 案例的规划上限。

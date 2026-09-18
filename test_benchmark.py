@@ -8,6 +8,8 @@ from pathlib import Path
 from benchmark import (
     evaluation_digest,
     load_benchmark_manifest,
+    run_deterministic_audit,
+    save_deterministic_audit,
     select_case_ids,
     validate_manifest_coverage,
 )
@@ -118,6 +120,32 @@ class BenchmarkManifestTests(unittest.TestCase):
             item["path"] in {"benchmark.py", "test_benchmark.py"}
             for item in result.data["matches"]
         ))
+
+    def test_complete_static_deterministic_audit_passes(self):
+        report = run_deterministic_audit(ROOT, execute_processes=False)
+        self.assertEqual(report["status"], "passed_with_warnings")
+        self.assertEqual(report["summary"]["case_count"], 15)
+        self.assertEqual(report["summary"]["executable_case_count"], 12)
+        self.assertEqual(report["summary"]["harness_check_count"], 22)
+        self.assertEqual(report["summary"]["failed_check_count"], 0)
+        self.assertEqual(report["unsupported_keywords"], [])
+        self.assertEqual(report["rag_misses"], [])
+        self.assertEqual(
+            {item["code"] for item in report["warnings"]},
+            {
+                "expected_exception_not_hard_gate",
+                "partial_evidence_threshold",
+            },
+        )
+
+    def test_deterministic_audit_report_can_be_saved(self):
+        report = run_deterministic_audit(ROOT, execute_processes=False)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "audit.json"
+            save_deterministic_audit(report, output)
+            saved = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(saved["audit_version"], "v14.7-deterministic")
+        self.assertEqual(saved["status"], "passed_with_warnings")
 
 
 if __name__ == "__main__":

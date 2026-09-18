@@ -1,6 +1,8 @@
-# IncidentPilot V14.6 · Expanded Benchmark 最终批
+# IncidentPilot V14.7 · Deterministic Benchmark Audit
 
-V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，现已达到规划上限：十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。相同五案例、Profile、预算和模型下的 V13/V14.3 单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
+V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计，把划分、资产、复现、Harness 映射、RAG 可发现性、答案隔离、评分关键词来源和冻结报告哈希纳入同一份机器可读报告；它不创建模型客户端，也不调用 DeepSeek。
+
+审计发现并修复了五处“评分术语在允许取证材料中缺少字面支撑”的数据质量问题：异步契约补充 `coroutine/await`，分页契约补充 `1-based`，支付契约补充“超时”，事务契约补充 `rollback`。没有改动 `graph.py`、评分器、冻结的 V13/V14.3 结果或任何 Case ID 专用调查规则。相同五案例、Profile、预算和模型下的历史单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
@@ -1415,7 +1417,9 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 196 项测试，覆盖：
+当前共有 198 项测试，覆盖：
+
+- 完整 Benchmark 静态审计及 JSON 报告持久化；
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1495,6 +1499,16 @@ ExperimentRun
 - 旧 `run_agent()` 接口兼容。
 
 离线测试使用模拟模型，不读取真实 API Key，不产生模型费用。真实 Evaluation 与消融实验只有在主动运行 `run_evals.py` 时才调用 `api.env` 配置的模型。
+
+运行完整确定性审计：
+
+```powershell
+.\.venv\Scripts\python.exe benchmark.py
+```
+
+该命令不调用模型。它会检查十五个 Evaluation 的集合划分、可见证据与评分关键词、RAG 文档、日志、文件工具隔离、十二个复现入口与二十二个 Harness Check，并验证冻结基线原始报告的 SHA-256；默认还会以模块和脚本两种方式执行十二个故障入口、运行全部 Harness Check 和审计专项回归。结果写入 `demo_app/evals/results/v14.7-deterministic-audit.json`。如只需快速检查静态结构，可添加 `--skip-processes`。
+
+审计状态允许 `passed_with_warnings`：这表示所有完整性检查均通过，但报告明确保留评分策略风险。当前已知两项是 `expected_exception` 尚未作为硬通过门槛，以及多 Evidence 文件案例的代码覆盖硬阈值仍为 50%。为保持冻结历史结果可比较，V14.7 只报告风险，不在同一阶段修改评分口径。
 
 ## 13. 安全设计
 
@@ -1665,8 +1679,8 @@ ModuleNotFoundError: No module named 'langgraph'
 推荐顺序：
 
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
-2. Expanded Benchmark 已达到十二个可执行场景；停止继续加案例，先对十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离和确定性评分做一次完整审计；
-3. 审计稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
+2. Expanded Benchmark 已达到十二个可执行场景；十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离、关键词来源和冻结结果哈希已纳入 V14.7 完整确定性审计；
+3. 下一阶段加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。

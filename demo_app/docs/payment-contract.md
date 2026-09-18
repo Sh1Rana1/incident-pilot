@@ -3,7 +3,7 @@
 `gateway.charge(order_id, amount, *, idempotency_key=None)` 发起扣款。
 金额使用最小货币单位的正整数。成功返回收据 ID。
 
-扣款是非幂等写操作。TimeoutError 只表示客户端未收到响应，不能推断服务端
+扣款是非幂等写操作。发生超时（`TimeoutError`）只表示客户端未收到响应，不能推断服务端
 没有扣款。网关可能已经提交扣款，随后响应在传输中丢失。
 
 网关支持可选 `idempotency_key`：同一个逻辑支付的重试必须复用同一个键，
