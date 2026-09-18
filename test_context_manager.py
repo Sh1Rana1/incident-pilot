@@ -5,6 +5,7 @@ import unittest
 
 from context_manager import compact_messages
 from models import DiagnosticHypothesis, ObservedSource, ToolObservation
+from provenance import build_observation
 
 
 def make_observation(index: int, excerpt_size: int = 100) -> ToolObservation:
@@ -107,6 +108,59 @@ class ContextManagerTests(unittest.TestCase):
         self.assertIn('"final_report_evidence_mode":true', memory)
         self.assertIn("obs-001", memory)
         self.assertIn("obs-008", memory)
+
+    def test_targeted_read_keeps_tail_line_after_context_compaction(self) -> None:
+        lines = [
+            {"line": number, "content": "x" * 300}
+            for number in range(40, 60)
+        ]
+        lines[-1]["content"] = "CRITICAL_TAIL_MARKER = payload['user_id']"
+        payload = json.dumps({
+            "ok": True,
+            "data": {"path": "demo_app/run_case.py", "lines": lines},
+            "error": None,
+            "meta": {},
+        })
+        observation, _ = build_observation(
+            "obs-010",
+            "call-10",
+            3,
+            "read_file",
+            json.dumps({
+                "path": "demo_app/run_case.py",
+                "start_line": 40,
+                "end_line": 59,
+            }),
+            payload,
+            1,
+        )
+
+        compacted, changed = compact_messages(
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "question"},
+            ],
+            [observation],
+            [],
+        )
+
+        self.assertTrue(changed)
+        self.assertIn("59: CRITICAL_TAIL_MARKER", compacted[-1]["content"])
+
+    def test_non_targeted_observation_keeps_existing_excerpt_limit(self) -> None:
+        observation = make_observation(1, 2_000)
+
+        compacted, _ = compact_messages(
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "question"},
+            ],
+            [observation],
+            [],
+        )
+        memory = json.loads(compacted[-1]["content"].split("\n", 1)[1])
+
+        self.assertEqual(len(memory["observations"][0]["result_excerpt"]), 700)
 
 
 if __name__ == "__main__":

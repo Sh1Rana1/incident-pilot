@@ -8,6 +8,23 @@ from models import DiagnosticHypothesis, ToolObservation
 
 MAX_RECENT_UNREFERENCED_OBSERVATIONS = 4
 MAX_OBSERVATION_EXCERPT_CHARS = 700
+MAX_TARGETED_READ_EXCERPT_CHARS = 4_000
+
+
+def _observation_excerpt(observation: ToolObservation) -> str:
+    targeted_read = (
+        observation.tool_name == "read_file"
+        and (
+            observation.arguments.get("start_line") is not None
+            or observation.arguments.get("end_line") is not None
+        )
+    )
+    limit = (
+        MAX_TARGETED_READ_EXCERPT_CHARS
+        if targeted_read
+        else MAX_OBSERVATION_EXCERPT_CHARS
+    )
+    return observation.result_excerpt[:limit]
 
 
 def _first_message(messages: list[dict], role: str) -> dict | None:
@@ -81,7 +98,7 @@ def compact_messages(
                 "repeated": item.repeated,
                 "sources": [source.model_dump(mode="json") for source in item.sources],
                 "error": item.error,
-                "result_excerpt": item.result_excerpt[:MAX_OBSERVATION_EXCERPT_CHARS],
+                "result_excerpt": _observation_excerpt(item),
             }
             for item in selected
         ],

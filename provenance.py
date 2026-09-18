@@ -9,6 +9,10 @@ from typing import Any
 from models import Evidence, IncidentReport, ObservedSource, ToolObservation
 
 
+MAX_RESULT_EXCERPT_CHARS = 1_000
+MAX_TARGETED_READ_EXCERPT_CHARS = 4_000
+
+
 def _normalized_path(path: str) -> str:
     return path.replace("\\", "/").lstrip("./").lower()
 
@@ -55,6 +59,53 @@ def _extract_git_diff_sources(output: str) -> list[ObservedSource]:
                 line_end=end,
             ))
     return sources
+
+
+def _targeted_read_excerpt(payload: dict[str, Any]) -> str:
+    """紧凑保留定向窗口的每一行，避免 JSON 字段开销挤掉末端证据。"""
+    data = payload.get("data") or {}
+    path = str(data.get("path", ""))
+    lines = [
+        item for item in (data.get("lines") or [])
+        if isinstance(item, dict) and isinstance(item.get("line"), int)
+    ]
+    header = f"path={path}\n"
+    if not lines:
+        return header[:MAX_TARGETED_READ_EXCERPT_CHARS]
+    prefix_chars = sum(len(str(item["line"])) + 2 for item in lines)
+    newline_chars = max(0, len(lines) - 1)
+    content_budget = max(
+        0,
+        MAX_TARGETED_READ_EXCERPT_CHARS
+        - len(header)
+        - prefix_chars
+        - newline_chars,
+    )
+    per_line_budget = max(1, content_budget // len(lines))
+    rendered = [
+        f"{item['line']}: {str(item.get('content', ''))[:per_line_budget]}"
+        for item in lines
+    ]
+    return (header + "\n".join(rendered))[:MAX_TARGETED_READ_EXCERPT_CHARS]
+
+
+def _result_excerpt(
+    tool_name: str,
+    arguments: dict[str, Any],
+    payload: dict[str, Any],
+    result_with_id: str,
+) -> str:
+    targeted_read = (
+        tool_name == "read_file"
+        and bool(payload.get("ok"))
+        and (
+            arguments.get("start_line") is not None
+            or arguments.get("end_line") is not None
+        )
+    )
+    if targeted_read:
+        return _targeted_read_excerpt(payload)
+    return result_with_id[:MAX_RESULT_EXCERPT_CHARS]
 
 
 def extract_observed_sources(tool_name: str, result_payload: dict[str, Any]) -> list[ObservedSource]:
@@ -144,7 +195,12 @@ def build_observation(
         sources=extract_observed_sources(tool_name, payload),
         error=payload.get("error"),
         result_sha256=hashlib.sha256(result_with_id.encode("utf-8")).hexdigest(),
-        result_excerpt=result_with_id[:1000],
+        result_excerpt=_result_excerpt(
+            tool_name,
+            arguments,
+            payload,
+            result_with_id,
+        ),
         duration_ms=round(duration_ms, 2),
     )
     return observation, result_with_id

@@ -61,6 +61,36 @@ class ProvenanceTests(unittest.TestCase):
         errors = validate_report_provenance(report_for(evidence), [observation])
         self.assertTrue(any("不在 obs-001" in item for item in errors))
 
+    def test_targeted_read_excerpt_keeps_last_requested_line(self) -> None:
+        lines = [
+            {"line": number, "content": "x" * 300}
+            for number in range(40, 60)
+        ]
+        lines[-1]["content"] = "CRITICAL_TAIL_MARKER = payload['user_id']"
+        payload = json.dumps({
+            "ok": True,
+            "data": {"path": "demo_app/run_case.py", "lines": lines},
+            "error": None,
+            "meta": {},
+        })
+
+        observation, _ = build_observation(
+            "obs-010",
+            "call-10",
+            3,
+            "read_file",
+            json.dumps({
+                "path": "demo_app/run_case.py",
+                "start_line": 40,
+                "end_line": 59,
+            }),
+            payload,
+            1,
+        )
+
+        self.assertIn("59: CRITICAL_TAIL_MARKER", observation.result_excerpt)
+        self.assertLessEqual(len(observation.result_excerpt), 4_000)
+
     def test_git_commit_can_be_grounded_without_fake_file(self) -> None:
         commit = "61932b9b542aadc3fa14a8243dda04cf9b74546d"
         payload = json.dumps({
