@@ -36,6 +36,8 @@ DEMO_CASES = {
     "cache_key_version",
     "pagination_off_by_one",
     "config_env_rename",
+    "transaction_rollback",
+    "dependency_contract_change",
     "missing_user_id",
     "schema_mismatch",
     "connection_leak",

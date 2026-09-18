@@ -1,4 +1,4 @@
-"""运行十个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
+"""运行十二个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
 
 import argparse
 import asyncio
@@ -22,7 +22,10 @@ from demo_app.app.time_window import completed_within_sla
 from demo_app.app.cache_store import load_profile_cache, seed_profile_cache
 from demo_app.app.pagination import paginate_events
 from demo_app.app.settings import load_request_timeout
+from demo_app.app.transactions import create_import_connection, import_then_continue
+from demo_app.app.notification_client import send_welcome_notification
 from demo_app.fixtures.payment_gateway import PaymentGateway
+from demo_app.fixtures.notification_sdk import NotificationSDK
 
 
 CASES = (
@@ -36,6 +39,8 @@ CASES = (
     "cache_key_version",
     "pagination_off_by_one",
     "config_env_rename",
+    "transaction_rollback",
+    "dependency_contract_change",
 )
 
 
@@ -84,6 +89,22 @@ def run_case(case_id: str) -> None:
             )
     elif case_id == "config_env_rename":
         load_request_timeout({"HTTP_TIMEOUT_SECONDS": "15"})
+    elif case_id == "transaction_rollback":
+        connection = create_import_connection()
+        try:
+            remaining_rows = import_then_continue(connection)
+            if remaining_rows != 0:
+                raise RuntimeError(
+                    f"transaction rollback missing: expected 0 rows, got {remaining_rows}"
+                )
+        finally:
+            connection.close()
+    elif case_id == "dependency_contract_change":
+        send_welcome_notification(
+            NotificationSDK(),
+            recipient="user@example.com",
+            message="Welcome",
+        )
     else:
         raise ValueError(f"未知案例: {case_id}")
 

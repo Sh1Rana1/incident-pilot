@@ -55,6 +55,18 @@ NEW_CASES = {
         'variable_name = "REQUEST_TIMEOUT_SECONDS"',
         'variable_name = "HTTP_TIMEOUT_SECONDS"',
     ),
+    "transaction_rollback": (
+        "RuntimeError: transaction rollback missing: expected 0 rows, got 1",
+        "transaction_atomicity_contract", "demo_app/app/transactions.py",
+        "connection.commit()",
+        "connection.rollback()",
+    ),
+    "dependency_contract_change": (
+        "TypeError: NotificationSDK.send() got an unexpected keyword argument 'message'",
+        "notification_sdk_v3_contract", "demo_app/app/notification_client.py",
+        "message=message",
+        "content=message",
+    ),
 }
 
 
@@ -125,13 +137,18 @@ class ExpandedBenchmarkTests(unittest.TestCase):
             "demo_app/checks/cache_contract_check.py",
             "demo_app/checks/pagination_contract_check.py",
             "demo_app/checks/settings_contract_check.py",
+            "demo_app/checks/transaction_contract_check.py",
+            "demo_app/checks/notification_contract_check.py",
             "demo_app/fixtures/payment_gateway.py",
+            "demo_app/fixtures/notification_sdk.py",
             "demo_app/evals/async_missing_await.json",
             "demo_app/evals/retry_non_idempotent.json",
             "demo_app/evals/timezone_mismatch.json",
             "demo_app/evals/cache_key_version.json",
             "demo_app/evals/pagination_off_by_one.json",
             "demo_app/evals/config_env_rename.json",
+            "demo_app/evals/transaction_rollback.json",
+            "demo_app/evals/dependency_contract_change.json",
             "test_demo_app.py",
         ]
         for relative in protected:
@@ -140,7 +157,10 @@ class ExpandedBenchmarkTests(unittest.TestCase):
                       "test_equivalent_offsets_use_elapsed_time",
                       "test_seeded_profile_can_be_loaded",
                       "test_first_page_starts_with_first_event",
-                      "test_current_timeout_variable_is_loaded", "self.receipts",
+                      "test_current_timeout_variable_is_loaded",
+                      "test_failed_import_rolls_back_partial_row",
+                      "test_welcome_notification_uses_current_sdk_contract",
+                      "self.receipts",
                       "NEW_CASES"):
             result = search_code(SearchCodeArgs(query=query))
             self.assertTrue(result.ok)

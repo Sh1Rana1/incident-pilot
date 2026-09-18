@@ -13,6 +13,16 @@
 
 ---
 
+## V14.6：Expanded Benchmark 最终批（2026-09-19）
+
+- 保持 `graph.py`、Prompt、模型与工具预算、评分器、五个 development 案例及正式对照结果不变，新增 `transaction_rollback` 与 `dependency_contract_change` 两个 hidden 案例；Benchmark 版本升为 `v14.6`，达到十二个可执行场景、十五个 Evaluation 案例的规划上限。
+- `transaction_rollback` 使用真实内存 SQLite 复现失败批次错误提交部分记录；契约要求整批原子回滚、清除事务状态并允许连接继续处理后续批次。`dependency_contract_change` 使用文件工具不可见的 Notification SDK v3 夹具复现 `message`→`content` 关键字迁移，Agent 只能调查可见适配层和 RAG 迁移文档。
+- 每例均增加模块/脚本复现、简化日志、业务契约、Evaluation，以及 reproduction/regression Harness Check。新增 `demo_transaction_rollback`、`transaction_atomicity_contract`、`demo_dependency_contract_change`、`notification_sdk_v3_contract`，Harness 总数由 18 增至 22。
+- 既有参数化测试矩阵扩展到八个新增案例：两种入口必须稳定失败，故障版契约检查必须失败，临时副本应用最小参考修复后入口与契约检查必须共同通过；新增 Check、Fixture 和 Eval 继续被 Agent 文件工具隔离。
+- 三个相关测试模块共 30 项专项测试通过，完整离线测试保持 196 项并全部通过；`main.py doctor` 通过并确认 Harness 清单含 22 项。测试数量没有增加，因为最终批继续扩展既有参数化矩阵。本阶段不调用真实模型、不产生 Token 费用，也不修改冻结的 V13/V14.3 development 结果。下一阶段停止扩充案例，先做完整确定性审计，再实现默认关闭的 LLM Judge。
+
+---
+
 ## V14.5：Benchmark 第三批两个案例（2026-09-18）
 
 - 保持 `graph.py`、Prompt、模型与工具预算、评分器、五个 development 案例及正式对照结果不变，新增 `pagination_off_by_one` 与 `config_env_rename` 两个 hidden 案例；Benchmark 版本升为 `v14.5`，当前共十个可执行场景、十三个 Evaluation 案例。

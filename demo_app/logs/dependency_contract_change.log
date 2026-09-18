@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/app/notification_client.py", in send_welcome_notification
+    return sdk.send(recipient=recipient, message=message)
+TypeError: NotificationSDK.send() got an unexpected keyword argument 'message'

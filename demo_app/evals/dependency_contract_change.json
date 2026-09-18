@@ -1,0 +1,8 @@
+{
+  "case_id": "dependency_contract_change",
+  "question": "升级通知依赖后出现 TypeError: NotificationSDK.send() got an unexpected keyword argument 'message'。请调查 demo_app 的 SDK 适配层、迁移契约和根因。",
+  "expected_exception": "TypeError",
+  "root_cause_keywords": ["SDK", "message", "content"],
+  "evidence_files": ["demo_app/app/notification_client.py"],
+  "relevant_docs": ["demo_app/docs/client-migrations.md"]
+}

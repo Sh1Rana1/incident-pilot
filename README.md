@@ -1,6 +1,6 @@
-# IncidentPilot V14.5 · Expanded Benchmark 第三批
+# IncidentPilot V14.6 · Expanded Benchmark 最终批
 
-V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.5 保持 Agent 控制流不变，分两批加入时区、缓存 Key、分页边界和环境变量改名案例，当前共十个可执行场景、十三个 Evaluation 案例、十八个 Harness Check。相同五案例、Profile、预算和模型下的 V13/V14.3 单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
+V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，现已达到规划上限：十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。相同五案例、Profile、预算和模型下的 V13/V14.3 单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
@@ -45,10 +45,12 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 .\.venv\Scripts\python.exe -m demo_app.run_case cache_key_version
 .\.venv\Scripts\python.exe -m demo_app.run_case pagination_off_by_one
 .\.venv\Scripts\python.exe -m demo_app.run_case config_env_rename
+.\.venv\Scripts\python.exe -m demo_app.run_case transaction_rollback
+.\.venv\Scripts\python.exe -m demo_app.run_case dependency_contract_change
 .\.venv\Scripts\python.exe -m unittest test_demo_app -v
 ```
 
-前六条在故障版本中预期非零退出。扩展案例通过 `run_check` 的预登记检查运行；兼容工具 `run_demo_case` 仍只接受 V13 的四个案例。六个扩展案例都有故意在故障版本失败的按需契约检查，其中本批新增 `pagination_page_number_contract` 与 `http_timeout_env_contract`；默认测试会验证这些失败确实被检测到，并在临时副本应用参考修复后验证复现入口与契约检查共同通过。
+前八条在故障版本中预期非零退出。扩展案例通过 `run_check` 的预登记检查运行；兼容工具 `run_demo_case` 仍只接受 V13 的四个案例。八个扩展案例都有故意在故障版本失败的按需契约检查，其中最终批新增 `transaction_atomicity_contract` 与 `notification_sdk_v3_contract`；默认测试会验证这些失败确实被检测到，并在临时副本应用参考修复后验证复现入口与契约检查共同通过。
 
 IncidentPilot 是一个面向 Python 项目的证据驱动故障诊断 Agent。用户提交 traceback 或问题描述后，模型通过受控工具查看代码、文档和 Git 信息，并可在人工批准后运行 Safe Test Harness，取得真实 Runtime Evidence。V13 在严格 Patch Proposal 之后增加独立审批与临时副本验证：系统先在副本中确认原故障可复现，再应用候选 diff，最后运行覆盖修改文件的契约检查和全局回归检查。正式工作区始终不被修改，验证过程也不会再调用模型。
 
@@ -433,7 +435,7 @@ IncidentPilot 可以：
 - 自动选择覆盖修改文件的契约检查和全局回归检查，并输出逐项验证结果；
 - 拒绝未读取文件、越界行号、伪造 Observation 和虚假 Git 提交；
 - 接受纯 JSON、JSON 代码块和前后带少量说明的合法报告，并记录历次验证错误；
-- 批量评测十三个故障诊断案例，其中一个强制要求 Runtime Evidence；
+- 批量评测十五个故障诊断案例，其中一个强制要求 Runtime Evidence；
 - 比较不同工具组合并统计多次运行稳定性。
 
 ### 2.2 不能做什么
@@ -497,7 +499,7 @@ incident-pilot/
 │   ├── logs/                   # 可用于提问的简化 traceback
 │   ├── checks/                 # 可由 Harness 运行的 Smoke 与业务契约检查
 │   ├── evals/                  # Agent 不可见的标准答案
-│   └── run_case.py             # 十个可执行故障的入口
+│   └── run_case.py             # 十二个可执行故障的入口
 ├── test_agent.py
 ├── test_context_manager.py
 ├── test_demo_app.py
@@ -872,7 +874,7 @@ Git 工具只使用预先定义的参数列表，`shell=False`，超时 8 秒，
 
 安全清单保存在 `harness.json`。每一项包含 `check_id`、`runner`、`target`、`description`、`timeout_seconds` 和 `expected_exit_codes`。当前 Runner 有三种：
 
-- `demo_case`：target 必须属于十个固定故障案例；
+- `demo_case`：target 必须属于十二个固定故障案例；
 - `unittest`：target 必须是合法的 Python 模块名，不能附加参数；
 - `pytest`：target 必须是仓库内已经存在的 Python 文件或目录，不能越界或使用通配符。
 
@@ -1239,7 +1241,7 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 
 交互式命令行选择 `full_runtime`，但 `ENABLE_RUNTIME_TOOLS=false` 时会在构图前移除 Runtime Schema，此时实际能力等同 `full`。开启后仍需要每次人工批准。普通 `--compare` 有意只比较 `code_only`、`code_rag`、`full`，不会悄悄增加可执行实验。
 
-### 11.2 十三个案例的分工
+### 11.2 十五个案例的分工
 
 | Case | 集合 | 主要目的 |
 |---|---|---|
@@ -1253,11 +1255,13 @@ Profile 使用三层基础限制：模型只收到允许的工具 Schema，执�
 | `cache_key_version` | hidden | 缓存读写双方使用不同 Key 版本 |
 | `pagination_off_by_one` | hidden | 1-based 页码换算时跳过第一页记录 |
 | `config_env_rename` | hidden | 部署模板改名后应用仍读取旧环境变量 |
+| `transaction_rollback` | hidden | 失败批次错误提交部分写入而没有回滚 |
+| `dependency_contract_change` | hidden | SDK v3 关键字参数迁移后的适配层不兼容 |
 | `git_regression` | challenge | 已知连接泄漏根因的 Git 历史变体 |
 | `misleading_documentation` | challenge | 已知连接泄漏根因的误导文档变体 |
 | `runtime_required` | runtime | 实际复现并引用 Runtime ID |
 
-`git_regression` 和 `misleading_documentation` 复用 development 中的连接泄漏，属于工具能力挑战题，不计作未见故障泛化。hidden set 当前包含供应商文档、跨时区计算、缓存 Key 版本、分页边界和环境变量改名五个未参与 V13/V14.3 调优的故障。`git_regression` 依赖仓库历史；如果导出项目时丢失 `.git`，Git 组无法取得标准提交哈希。`runtime_required` 没有 Runtime Evidence 时必定失败。
+`git_regression` 和 `misleading_documentation` 复用 development 中的连接泄漏，属于工具能力挑战题，不计作未见故障泛化。hidden set 当前包含供应商文档、跨时区计算、缓存 Key 版本、分页边界、环境变量改名、事务回滚和 SDK 契约变化七个未参与 V13/V14.3 调优的故障。`git_regression` 依赖仓库历史；如果导出项目时丢失 `.git`，Git 组无法取得标准提交哈希。`runtime_required` 没有 Runtime Evidence 时必定失败。
 
 ### 11.3 运行实验
 
@@ -1476,7 +1480,7 @@ ExperimentRun
 - 强制总结失败后的单次无工具格式修复；
 - Tool Profile Schema 过滤和执行层越权拒绝；
 - 多行命令行输入；
-- 十个可执行 Demo 故障稳定复现，以及六个扩展案例的隔离参考修复验证；
+- 十二个可执行 Demo 故障稳定复现，以及八个扩展案例的隔离参考修复验证；
 - Profile 对 RAG 文档和外部系统夹具的路径级隔离；
 - 文档得分必须由 `retrieve_docs` 调用触发；
 - 精确错误码和配置键在混合检索中获得额外权重，供应商契约优先召回；
@@ -1625,7 +1629,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ## 16. 当前限制
 
-- Demo 只有十三个评测案例，规模仍然太小，不能代表生产环境；
+- Demo 只有十五个评测案例，规模仍然不能代表生产环境；
 - Case、代码注释和事故文档比较明确，存在玩具数据集偏简单的问题；
 - 根因关键词不理解同义词，也可能被关键词投机；
 - Observation 能确认模型实际看过来源，但不能完全判断自然语言 Claim 与证据的语义蕴含关系；
@@ -1661,8 +1665,8 @@ ModuleNotFoundError: No module named 'langgraph'
 推荐顺序：
 
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
-2. 保持当前 Agent 控制流不变，按每批两个案例逐步扩展到 10–12 个可执行场景；每批补齐故障代码、复现入口、日志、业务文档、Harness 和 Evaluation 标准，并检查答案隔离；
-3. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
+2. Expanded Benchmark 已达到十二个可执行场景；停止继续加案例，先对十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离和确定性评分做一次完整审计；
+3. 审计稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。

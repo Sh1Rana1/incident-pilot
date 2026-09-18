@@ -122,6 +122,46 @@
       "covers_files": ["demo_app/app/settings.py"]
     },
     {
+      "check_id": "demo_transaction_rollback",
+      "runner": "demo_case",
+      "target": "transaction_rollback",
+      "description": "复现失败批次提交部分写入而没有回滚",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/transactions.py"]
+    },
+    {
+      "check_id": "transaction_atomicity_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.transaction_contract_check",
+      "description": "验证失败批次原子回滚且连接可继续处理后续事务",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/transactions.py"]
+    },
+    {
+      "check_id": "demo_dependency_contract_change",
+      "runner": "demo_case",
+      "target": "dependency_contract_change",
+      "description": "复现 Notification SDK 升级后的关键字参数不兼容",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/notification_client.py"]
+    },
+    {
+      "check_id": "notification_sdk_v3_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.notification_contract_check",
+      "description": "验证应用适配层把业务消息映射到 SDK v3 content 参数",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/notification_client.py"]
+    },
+    {
       "check_id": "demo_missing_user_id",
       "runner": "demo_case",
       "target": "missing_user_id",

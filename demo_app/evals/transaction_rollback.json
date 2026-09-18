@@ -1,0 +1,8 @@
+{
+  "case_id": "transaction_rollback",
+  "question": "失败的批量导入结束后出现 RuntimeError: transaction rollback missing: expected 0 rows, got 1。请调查 demo_app 的事务失败路径、部分写入和业务事务契约。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["事务", "rollback", "commit"],
+  "evidence_files": ["demo_app/app/transactions.py"],
+  "relevant_docs": ["demo_app/docs/transaction-contract.md"]
+}
