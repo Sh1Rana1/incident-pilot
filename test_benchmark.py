@@ -124,20 +124,14 @@ class BenchmarkManifestTests(unittest.TestCase):
 
     def test_complete_static_deterministic_audit_passes(self):
         report = run_deterministic_audit(ROOT, execute_processes=False)
-        self.assertEqual(report["status"], "passed_with_warnings")
+        self.assertEqual(report["status"], "passed")
         self.assertEqual(report["summary"]["case_count"], 15)
         self.assertEqual(report["summary"]["executable_case_count"], 12)
         self.assertEqual(report["summary"]["harness_check_count"], 22)
         self.assertEqual(report["summary"]["failed_check_count"], 0)
         self.assertEqual(report["unsupported_keywords"], [])
         self.assertEqual(report["rag_misses"], [])
-        self.assertEqual(
-            {item["code"] for item in report["warnings"]},
-            {
-                "expected_exception_not_hard_gate",
-                "partial_evidence_threshold",
-            },
-        )
+        self.assertEqual(report["warnings"], [])
 
     def test_deterministic_audit_report_can_be_saved(self):
         report = run_deterministic_audit(ROOT, execute_processes=False)
@@ -145,8 +139,8 @@ class BenchmarkManifestTests(unittest.TestCase):
             output = Path(temporary_directory) / "audit.json"
             save_deterministic_audit(report, output)
             saved = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual(saved["audit_version"], "v14.8-deterministic")
-        self.assertEqual(saved["status"], "passed_with_warnings")
+        self.assertEqual(saved["audit_version"], "v14.9-deterministic")
+        self.assertEqual(saved["status"], "passed")
 
     def test_default_audit_output_is_ignored_and_existing_report_is_immutable(self):
         output = default_audit_output(ROOT, "20260919-020000")

@@ -1,6 +1,6 @@
 # IncidentPilot V14.8 · Optional LLM Judge
 
-V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge，专门评价根因完整性、报错点与系统根因的区分、修复可执行性和明显遗漏。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
+V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge；V14.9 将异常类型和全部必需代码文件覆盖提升为确定性硬门槛，并据此生成最终正式数据。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
 
 LLM Judge 是旁路语义评分，不是新的通过门槛：本地确定性评测仍独占引用真实性、Evidence 落地、Claim 覆盖、Runtime 要求和最终 `passed`。Judge 每份最终报告最多调用一次，不使用工具、不读取 Observation 来源、不自动重试或格式修复；高分不能挽救确定性失败，低分也不能撤销确定性通过。`ENABLE_LLM_JUDGE=false` 且未传 `--judge` 时，现有 Evaluation 的调用次数和费用完全不变。
 
@@ -1468,7 +1468,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 205 项测试，覆盖：
+当前共有 207 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
 - LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；
@@ -1564,10 +1564,10 @@ ExperimentRun
 
 ```powershell
 .\.venv\Scripts\python.exe benchmark.py `
-  --output demo_app/evals/results/v14.8-deterministic-audit.json
+  --output demo_app/evals/results/v14.9-deterministic-audit.json
 ```
 
-审计状态允许 `passed_with_warnings`：这表示所有完整性检查均通过，但报告明确保留评分策略风险。当前已知两项是 `expected_exception` 尚未作为硬通过门槛，以及多 Evidence 文件案例的代码覆盖硬阈值仍为 50%。为保持冻结历史结果可比较，V14.7 只报告风险，不在同一阶段修改评分口径。
+V14.9 已处理 V14.7 披露的两项评分风险：`expected_exception` 必须在最终报告中明确出现，且 `evidence_files` 列出的必需代码文件必须 100% 覆盖。旧 V13/V14.3 与 V14.7 报告是不可变历史快照，不按新规则回算；新正式实验统一使用 V14.9 口径。
 
 ## 13. 安全设计
 

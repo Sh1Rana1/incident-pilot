@@ -258,7 +258,7 @@ def run_deterministic_audit(
     _record(
         checks,
         "manifest:benchmark_version",
-        manifest.benchmark_version == "v14.6",
+        manifest.benchmark_version == "v14.9",
         actual=manifest.benchmark_version,
     )
     for split, expected in EXPECTED_SPLIT_COUNTS.items():
@@ -596,7 +596,7 @@ def run_deterministic_audit(
     frozen_results = _audit_frozen_results(root, checks)
 
     evaluation_source = (root / "evaluation.py").read_text(encoding="utf-8")
-    if "if not scores.expected_exception_mentioned" not in evaluation_source:
+    if "if not expected_exception_mentioned" not in evaluation_source:
         warnings.append({
             "code": "expected_exception_not_hard_gate",
             "message": (
@@ -604,12 +604,12 @@ def run_deterministic_audit(
                 "报告即使未说明异常类型也可能通过。"
             ),
         })
-    if "if evidence_rate < 0.5" in evaluation_source:
+    if "if evidence_rate < 1.0" not in evaluation_source:
         warnings.append({
             "code": "partial_evidence_threshold",
             "message": (
-                "当前代码 Evidence 硬门槛为 50%，列出多个必需文件的案例可能在"
-                "只覆盖一半时通过。冻结历史结果沿用该规则，本次审计不改评分器。"
+                "代码 Evidence 尚未要求覆盖全部必需文件，多文件案例可能在"
+                "只覆盖一部分时通过。"
             ),
         })
 
@@ -621,7 +621,7 @@ def run_deterministic_audit(
     dirty = _git(root, "status", "--porcelain", "--untracked-files=all")
     return {
         "schema_version": 1,
-        "audit_version": "v14.8-deterministic",
+        "audit_version": "v14.9-deterministic",
         "status": status,
         "repository_commit": head.stdout.strip() if head.returncode == 0 else None,
         "working_tree_dirty": bool(dirty.stdout.strip()),

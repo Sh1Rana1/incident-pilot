@@ -245,14 +245,20 @@ def score_case(
         else 0.0
     )
 
-    # 通过条件故意保持可解释：根因关键词全中、至少一半核心代码文件命中，
-    # 并且报告里所有本地文件引用都真实有效。文档命中单独计分，不作为硬门槛。
+    # 通过条件保持可解释且严格：异常类型必须明确出现、根因关键词全中、
+    # 所有必需代码文件都必须命中，并且报告里的引用与 Claim 全部有真实来源。
+    # 文档命中继续单独计分；不是所有案例都必须依赖文档才能确定根因。
+    expected_exception_mentioned = case.expected_exception.lower() in report_text
     failure_reasons: list[str] = []
+    if not expected_exception_mentioned:
+        failure_reasons.append(
+            f"missing_expected_exception:{case.expected_exception}"
+        )
     if missing_keywords:
         failure_reasons.append(
             f"missing_root_cause_keywords:{','.join(missing_keywords)}"
         )
-    if evidence_rate < 0.5:
+    if evidence_rate < 1.0:
         failure_reasons.append("insufficient_evidence_files")
     if invalid_citations:
         failure_reasons.append(f"invalid_citations:{invalid_citations}")
@@ -268,7 +274,7 @@ def score_case(
         failure_reasons.append(f"stop_reason:{result.metrics.stop_reason}")
     passed = not failure_reasons
     scores = CaseScores(
-        expected_exception_mentioned=case.expected_exception.lower() in report_text,
+        expected_exception_mentioned=expected_exception_mentioned,
         root_cause_keyword_hits=keyword_hits,
         root_cause_keyword_total=len(case.root_cause_keywords),
         root_cause_keyword_rate=keyword_rate,

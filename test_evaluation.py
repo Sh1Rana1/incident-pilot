@@ -151,6 +151,45 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(result.scores.invalid_citations, 1)
         self.assertLess(result.scores.citation_validity_rate, 1.0)
 
+    def test_missing_expected_exception_fails_case(self) -> None:
+        base = fake_result()
+        report = base.report.model_copy(update={
+            "summary": "用户创建请求失败",
+            "root_cause": "API 层没有校验 user_id，Service 直接读取该字段。",
+        })
+
+        result = score_case(
+            missing_user_case(),
+            base.model_copy(update={"report": report}),
+            ROOT,
+        )
+
+        self.assertFalse(result.scores.expected_exception_mentioned)
+        self.assertFalse(result.scores.passed)
+        self.assertIn(
+            "missing_expected_exception:KeyError",
+            result.scores.failure_reasons,
+        )
+
+    def test_partial_required_code_coverage_fails_case(self) -> None:
+        base = fake_result()
+        report = base.report.model_copy(update={
+            "claims": [base.report.claims[0].model_copy(update={
+                "evidence_ids": ["E1", "E3"],
+            })],
+            "evidence": [base.report.evidence[0], base.report.evidence[2]],
+        })
+
+        result = score_case(
+            missing_user_case(),
+            base.model_copy(update={"report": report}),
+            ROOT,
+        )
+
+        self.assertEqual(result.scores.evidence_file_rate, 0.5)
+        self.assertFalse(result.scores.passed)
+        self.assertIn("insufficient_evidence_files", result.scores.failure_reasons)
+
     def test_empty_evidence_does_not_receive_perfect_citation_rate(self) -> None:
         base = fake_result()
         empty_report = base.report.model_copy(update={
