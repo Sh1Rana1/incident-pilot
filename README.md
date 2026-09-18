@@ -20,7 +20,9 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 
 该项在干净提交 `5a88208` 上只运行了一次 `missing_user_id + full`。定向读取 `run_case.py:20–49` 的压缩摘要完整保留到第 49 行，包含第 35–36 行缺少 `user_id` 的调用；Agent 随后继续读取 `api.py`、`service.py` 和 `repository.py`。最终报告明确给出“入口构造非法 payload → API 不校验直接透传 → Service 用 `payload["user_id"]` 抛出 `KeyError`”的完整链路，机器评分 1/1，根因、代码文件、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0，形成两个 confirmed 假设并提前结束。与 V13 基线相比，模型调用 10→8、Token 61,085→44,612、耗时 60.58→47.67 秒、格式修复 1→0，工具调用均为 13；Observation 利用率 83%→75%。与第二项的单次验收相比，诊断覆盖更完整，但模型调用 5→8、工具调用 8→13、Token 23,705→44,612，不能把随机单样本解释为成本稳定改善。文档覆盖仍为 0%，并有两条成功 Observation 未用于报告。原始报告为 `.incident_reports/eval-20260918-195735.json`，SHA-256 为 `f1567eaf6cbf2e1a9f8750ecb29a111abc7437985c0d3f1f70a62b2b3f2175dd`。
 
-第四项优化把重复读取判断从“工具名和 JSON 参数完全相同”扩展到成功 `read_file` Observation 的真实文件行区间。新定向窗口如果已由一个或多个成功窗口的并集完整覆盖，执行层返回 `duplicate_read_range` 和可复用的 Observation ID，不再访问文件；只要还包含至少一行未覆盖内容就继续执行。失败、越界、被预算拦截或已标为重复的 Observation 不会建立覆盖范围。本项已完成离线回归，尚未运行付费真实验收。
+第四项优化把重复读取判断从“工具名和 JSON 参数完全相同”扩展到成功 `read_file` Observation 的真实文件行区间。新定向窗口如果已由一个或多个成功窗口的并集完整覆盖，执行层返回 `duplicate_read_range` 和可复用的 Observation ID，不再访问文件；只要还包含至少一行未覆盖内容就继续执行。失败、越界、被预算拦截或已标为重复的 Observation 不会建立覆盖范围。
+
+该项在干净提交 `2cc5f0a` 上只运行了一次 `missing_user_id + full`，机器评分继续为 1/1；根因、代码文件、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规、格式修复和 fallback 均为 0。报告仍完整说明“缺少 `user_id` 的案例输入 → API 原样透传 → Service 下标访问触发 `KeyError`”，但置信度为 medium、没有 confirmed 假设或早停，文档覆盖仍为 0%，三条成功 Observation 未用于报告。模型调用 9 次、工具调用 16 次、Token 42,336、耗时 42.28 秒、Observation 利用率 66.67%。本次唯一重复是精确相同的 `search_code("user_id")`，没有提出被旧范围完整覆盖的新 `read_file` 窗口，因此只能作为无回归验收，不能声称真实模型运行触发了新分支；区间去重行为由离线执行层回归确定性验证。模型还产生了三次超过 30 行的失败读取和一次 Profile 不允许的 `list_checks`，说明工具规划仍有优化空间。原始报告为 `.incident_reports/eval-20260918-201809.json`，SHA-256 为 `a3050fb4c5bf0e672990b1b15de61b6849822522ed5fecd2c4fb7f0980b477c0`。
 
 新增案例可离线复现：
 

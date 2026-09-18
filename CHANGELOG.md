@@ -59,7 +59,10 @@
 - 部分重叠但确实包含新行的请求继续执行；失败、越界、预算拦截和重复 Observation 不建立覆盖范围。整文件请求的未知末行不会被不完整窗口推测，其他工具继续按规范化参数精确去重。
 - Prompt 同步要求读取前检查压缩记忆中的成功范围；没有修改工具 Profile、文件隔离、Evidence 校验、评分标准或调查预算。
 - 新增四项回归测试，覆盖多 Observation 联合覆盖、被包含窗口拦截、部分重叠新增行放行和失败范围不污染记录；完整离线测试增至 189 项并全部通过。
-- 本项尚未运行付费真实验收；离线验证和干净提交完成后只运行一个对应案例。
+- 在干净提交 `2cc5f0a` 上只运行一次 `missing_user_id + full`，机器评分 1/1；根因/代码/引用/Evidence/Claim 均为 100%，Provenance 违规、格式修复和 fallback 均为 0。模型调用 9 次、工具调用 16 次、Token 42,336、耗时 42.28 秒，Observation 利用率 66.67%。
+- 报告完整覆盖缺失字段经 API 透传后在 Service 触发 `KeyError` 的链路，但只有 supported 假设、没有早停，文档覆盖仍为 0%，三条成功 Observation 未引用；另有三次超大范围读取失败和一次 Profile 禁止工具调用。
+- 本次唯一重复是精确相同的 `search_code("user_id")`，没有请求被旧窗口完整覆盖的 `read_file`，所以真实运行只证明无回归，不证明新语义分支被触发。`duplicate_read_range` 的确定性验收来自四项离线执行层回归，不能混淆两种结论。
+- 原始报告 `.incident_reports/eval-20260918-201809.json` 的 SHA-256 为 `a3050fb4c5bf0e672990b1b15de61b6849822522ed5fecd2c4fb7f0980b477c0`，元数据记录 `repository_commit=2cc5f0a...`、`working_tree_dirty=false`。
 
 ---
 
