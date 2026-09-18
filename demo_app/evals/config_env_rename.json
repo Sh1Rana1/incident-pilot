@@ -1,0 +1,8 @@
+{
+  "case_id": "config_env_rename",
+  "question": "使用当前部署模板启动时出现 KeyError: 'missing environment variable: REQUEST_TIMEOUT_SECONDS'。请调查 demo_app 的配置加载、环境变量契约和根因。",
+  "expected_exception": "KeyError",
+  "root_cause_keywords": ["HTTP_TIMEOUT_SECONDS", "REQUEST_TIMEOUT_SECONDS", "环境变量"],
+  "evidence_files": ["demo_app/app/settings.py"],
+  "relevant_docs": ["demo_app/docs/configuration-contract.md"]
+}

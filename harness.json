@@ -82,6 +82,46 @@
       "covers_files": ["demo_app/app/cache_store.py"]
     },
     {
+      "check_id": "demo_pagination_off_by_one",
+      "runner": "demo_case",
+      "target": "pagination_off_by_one",
+      "description": "复现从 1 开始的页码被错误换算导致第一页跳过记录",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/pagination.py"]
+    },
+    {
+      "check_id": "pagination_page_number_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.pagination_contract_check",
+      "description": "验证 1-based 分页的首尾页、剩余记录和非法页码",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/pagination.py"]
+    },
+    {
+      "check_id": "demo_config_env_rename",
+      "runner": "demo_case",
+      "target": "config_env_rename",
+      "description": "复现部署环境变量改名后应用仍读取旧名称",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/settings.py"]
+    },
+    {
+      "check_id": "http_timeout_env_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.settings_contract_check",
+      "description": "验证当前 HTTP 超时变量、旧名称拒绝和正整数约束",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/settings.py"]
+    },
+    {
       "check_id": "demo_missing_user_id",
       "runner": "demo_case",
       "target": "missing_user_id",

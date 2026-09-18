@@ -13,6 +13,16 @@
 
 ---
 
+## V14.5：Benchmark 第三批两个案例（2026-09-18）
+
+- 保持 `graph.py`、Prompt、模型与工具预算、评分器、五个 development 案例及正式对照结果不变，新增 `pagination_off_by_one` 与 `config_env_rename` 两个 hidden 案例；Benchmark 版本升为 `v14.5`，当前共十个可执行场景、十三个 Evaluation 案例。
+- `pagination_off_by_one` 复现公开 API 使用 1-based 页码、实现却直接以 `page * page_size` 计算切片起点而跳过第一页；`config_env_rename` 复现部署模板已使用 `HTTP_TIMEOUT_SECONDS`、应用仍读取旧 `REQUEST_TIMEOUT_SECONDS` 的启动失败。
+- 每例均增加故障代码、模块/脚本复现、简化日志、业务契约、Evaluation，以及 reproduction/regression Harness Check。Harness 新增 `demo_pagination_off_by_one`、`pagination_page_number_contract`、`demo_config_env_rename`、`http_timeout_env_contract`，总数由 14 增至 18。
+- 既有参数化测试矩阵扩展到六个新增案例：两种入口必须稳定失败，当前契约检查必须识别故障，临时副本应用最小参考修复后入口和契约检查必须共同通过；新增 Check/Eval 继续对 Agent 文件工具隔离。
+- 三个相关测试模块共 30 项专项测试通过，完整离线测试保持 196 项并全部通过；`main.py doctor` 通过并确认 Harness 清单含 18 项。测试数量没有增加，因为本批继续扩展既有参数化矩阵。本阶段不调用真实模型，不产生 Token 费用，也不把新 hidden 案例写入冻结的 V13/V14.3 development 结果。
+
+---
+
 ## V14.4：Benchmark 第二批两个案例（2026-09-18）
 
 - 保持 `graph.py`、Prompt、模型与工具预算、报告校验器和五个 development 案例不变，新增 `timezone_mismatch` 与 `cache_key_version` 两个 hidden 案例；Benchmark 版本升为 `v14.4`，当前共八个可执行场景、十一个 Evaluation 案例。

@@ -34,6 +34,8 @@ DEMO_CASES = {
     "retry_non_idempotent",
     "timezone_mismatch",
     "cache_key_version",
+    "pagination_off_by_one",
+    "config_env_rename",
     "missing_user_id",
     "schema_mismatch",
     "connection_leak",

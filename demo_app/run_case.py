@@ -1,4 +1,4 @@
-"""运行八个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
+"""运行十个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
 
 import argparse
 import asyncio
@@ -20,6 +20,8 @@ from demo_app.app.async_jobs import profile_name
 from demo_app.app.retry_policy import charge_order
 from demo_app.app.time_window import completed_within_sla
 from demo_app.app.cache_store import load_profile_cache, seed_profile_cache
+from demo_app.app.pagination import paginate_events
+from demo_app.app.settings import load_request_timeout
 from demo_app.fixtures.payment_gateway import PaymentGateway
 
 
@@ -32,6 +34,8 @@ CASES = (
     "retry_non_idempotent",
     "timezone_mismatch",
     "cache_key_version",
+    "pagination_off_by_one",
+    "config_env_rename",
 )
 
 
@@ -71,6 +75,15 @@ def run_case(case_id: str) -> None:
     elif case_id == "cache_key_version":
         cache = seed_profile_cache("user-001")
         load_profile_cache(cache, "user-001")
+    elif case_id == "pagination_off_by_one":
+        events = ["event-001", "event-002", "event-003"]
+        first_page = paginate_events(events, page=1, page_size=2)
+        if first_page != events[:2]:
+            raise RuntimeError(
+                f"pagination off by one: expected {events[:2]}, got {first_page}"
+            )
+    elif case_id == "config_env_rename":
+        load_request_timeout({"HTTP_TIMEOUT_SECONDS": "15"})
     else:
         raise ValueError(f"未知案例: {case_id}")
 

@@ -13,6 +13,8 @@
 .venv\Scripts\python.exe -m demo_app.run_case retry_non_idempotent
 .venv\Scripts\python.exe -m demo_app.run_case timezone_mismatch
 .venv\Scripts\python.exe -m demo_app.run_case cache_key_version
+.venv\Scripts\python.exe -m demo_app.run_case pagination_off_by_one
+.venv\Scripts\python.exe -m demo_app.run_case config_env_rename
 ```
 
 也支持直接运行脚本：
@@ -23,7 +25,7 @@
 
 `-m demo_app.run_case` 仍是推荐方式，因为它明确告诉 Python 按包加载模块。直接运行方式会由启动脚本自动把项目根目录加入模块搜索路径，因此不会再出现 `No module named 'demo_app'`。
 
-八个命令都应该以非零状态结束并打印 traceback：
+十个命令都应该以非零状态结束并打印 traceback：
 
 | 案例 | 预期异常 | 主要能力 |
 |---|---|---|
@@ -35,6 +37,8 @@
 | `retry_non_idempotent` | `duplicate charge` | 支付响应丢失契约 |
 | `timezone_mismatch` | `timezone mismatch` | 跨时区 elapsed time 契约 |
 | `cache_key_version` | `cache miss` | 缓存 Key 版本契约 |
+| `pagination_off_by_one` | `pagination off by one` | 1-based 分页契约 |
+| `config_env_rename` | `missing environment variable` | 部署配置改名契约 |
 
 配套材料：
 
@@ -53,6 +57,6 @@ V9 会维护候选假设，新证据必须先归入假设才能继续调查；�
 .venv\Scripts\python.exe -m unittest test_demo_app -v
 ```
 
-这些测试通过表示 Bug 仍然能够稳定复现，而不是表示业务代码没有 Bug。四个扩展案例另有按需契约检查 `async_profile_contract`、`payment_single_charge_contract`、`timezone_elapsed_contract`、`cache_key_version_contract`；在故障版本上应失败，离线测试会在临时副本验证参考修复后通过。
+这些测试通过表示 Bug 仍然能够稳定复现，而不是表示业务代码没有 Bug。六个扩展案例另有按需契约检查，本批新增 `pagination_page_number_contract` 和 `http_timeout_env_contract`；这些检查在故障版本上应失败，离线测试会在临时副本验证参考修复后通过。
 
-V14.4 共八个可执行场景、十一个评测问题。扩展场景由 Harness 的 `run_check` 执行，旧 `run_demo_case` 工具仍只接受前四个案例。`checks/`、`fixtures/`、`evals/` 对 Agent 文件工具隔离。业务文档只描述接口契约；三份直接给出旧案例根因的事故文档已移除。评测集合由内部 `_benchmark_manifest.json` 固定，五个 development 案例保持冻结，第二批新案例进入 hidden。
+V14.5 共十个可执行场景、十三个评测问题。扩展场景由 Harness 的 `run_check` 执行，旧 `run_demo_case` 工具仍只接受前四个案例。`checks/`、`fixtures/`、`evals/` 对 Agent 文件工具隔离。业务文档只描述接口契约；三份直接给出旧案例根因的事故文档已移除。评测集合由内部 `_benchmark_manifest.json` 固定，五个 development 案例保持冻结，第二、三批新案例进入 hidden。

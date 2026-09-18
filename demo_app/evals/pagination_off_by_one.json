@@ -1,0 +1,8 @@
+{
+  "case_id": "pagination_off_by_one",
+  "question": "事件列表第一页出现 RuntimeError: pagination off by one，本应返回前两条却只返回第三条。请调查 demo_app 的分页实现、页码契约和根因。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["分页", "page - 1", "1-based"],
+  "evidence_files": ["demo_app/app/pagination.py"],
+  "relevant_docs": ["demo_app/docs/pagination-contract.md"]
+}

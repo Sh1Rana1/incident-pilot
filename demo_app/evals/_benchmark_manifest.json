@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "benchmark_version": "v14.4",
+  "benchmark_version": "v14.5",
   "agent_baseline_commit": "8c804fb1658def12f5bece17af045a75d0e2bd95",
   "development_cases": [
     "missing_user_id",
@@ -12,7 +12,9 @@
   "hidden_cases": [
     "documentation_required",
     "timezone_mismatch",
-    "cache_key_version"
+    "cache_key_version",
+    "pagination_off_by_one",
+    "config_env_rename"
   ],
   "challenge_cases": [
     "git_regression",

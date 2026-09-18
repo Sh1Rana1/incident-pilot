@@ -1,4 +1,4 @@
-"""Demo App 故障夹具测试：通过代表三个故障仍能被稳定复现。"""
+"""Demo App 故障夹具测试：通过代表预登记故障仍能被稳定复现。"""
 
 import sqlite3
 import json
@@ -41,6 +41,19 @@ NEW_CASES = {
         "cache_key_version_contract", "demo_app/app/cache_store.py",
         'key = f"profile:{user_id}"',
         'key = f"profile:v2:{user_id}"',
+    ),
+    "pagination_off_by_one": (
+        "RuntimeError: pagination off by one: expected "
+        "['event-001', 'event-002'], got ['event-003']",
+        "pagination_page_number_contract", "demo_app/app/pagination.py",
+        "start = page * page_size",
+        "start = (page - 1) * page_size",
+    ),
+    "config_env_rename": (
+        "KeyError: 'missing environment variable: REQUEST_TIMEOUT_SECONDS'",
+        "http_timeout_env_contract", "demo_app/app/settings.py",
+        'variable_name = "REQUEST_TIMEOUT_SECONDS"',
+        'variable_name = "HTTP_TIMEOUT_SECONDS"',
     ),
 }
 
@@ -110,18 +123,24 @@ class ExpandedBenchmarkTests(unittest.TestCase):
             "demo_app/checks/payment_contract_check.py",
             "demo_app/checks/timezone_contract_check.py",
             "demo_app/checks/cache_contract_check.py",
+            "demo_app/checks/pagination_contract_check.py",
+            "demo_app/checks/settings_contract_check.py",
             "demo_app/fixtures/payment_gateway.py",
             "demo_app/evals/async_missing_await.json",
             "demo_app/evals/retry_non_idempotent.json",
             "demo_app/evals/timezone_mismatch.json",
             "demo_app/evals/cache_key_version.json",
+            "demo_app/evals/pagination_off_by_one.json",
+            "demo_app/evals/config_env_rename.json",
             "test_demo_app.py",
         ]
         for relative in protected:
             self.assertFalse(read_file(ReadFileArgs(path=relative)).ok, relative)
         for query in ("root_cause_keywords", "test_profile_name_is_resolved",
                       "test_equivalent_offsets_use_elapsed_time",
-                      "test_seeded_profile_can_be_loaded", "self.receipts",
+                      "test_seeded_profile_can_be_loaded",
+                      "test_first_page_starts_with_first_event",
+                      "test_current_timeout_variable_is_loaded", "self.receipts",
                       "NEW_CASES"):
             result = search_code(SearchCodeArgs(query=query))
             self.assertTrue(result.ok)

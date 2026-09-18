@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/app/settings.py", in load_request_timeout
+    raise KeyError(f"missing environment variable: {variable_name}")
+KeyError: 'missing environment variable: REQUEST_TIMEOUT_SECONDS'

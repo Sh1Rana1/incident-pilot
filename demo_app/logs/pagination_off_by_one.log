@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/run_case.py", in run_case
+    raise RuntimeError("pagination off by one: expected first page records")
+RuntimeError: pagination off by one: expected ['event-001', 'event-002'], got ['event-003']
