@@ -37,7 +37,9 @@
 - Prompt 要求已有搜索命中行时优先读取附近窄窗口，避免为确认一个命中位置反复读取整个长文件。
 - 注册器在严格模式递归规范化 JSON Schema：每个对象的 `required` 覆盖全部 `properties`、移除 `default`、保留 `null` 联合类型；非严格 Schema 和本地 Pydantic 默认值不变。这保证新增逻辑可选字段兼容 DeepSeek/OpenAI 严格工具格式。
 - 新增五项离线回归测试，覆盖定向范围、原始行号、反向/超大范围、起始行默认窗口、严格 nullable Schema 和非严格兼容；完整测试增至 182 项并全部通过。
-- 本项尚未运行真实模型验收；下一步只运行 `missing_user_id + full`，不批量消耗 Token。
+- 在干净提交 `4c2200e` 上唯一一次真实验收 `missing_user_id + full` 机器评分为 1/1：严格 Schema 没有 400，模型执行三次不超过 30 行的定向读取；模型调用 10→5、工具调用 13→8、Token 61,085→23,705、耗时 60.58→20.76 秒，格式修复 1→0。
+- 人工审计判定该报告只完成直接故障链而非完整系统根因：未读取 `api.py` 与 `api.md`，代码覆盖 50%、文档覆盖 0%，报告自身也声明 API 校验尚未验证；Observation 利用率 83%→50%。机器评分仍通过，暴露出当前通过阈值允许半数必需代码文件和零文档覆盖，不能把 1/1 外推为完整诊断质量提升。
+- 原始报告 `.incident_reports/eval-20260918-192237.json` 的 SHA-256 为 `c5cd3d966dae102ae6fe05d1915531ca8ce00a1f5915a652de8491ab2960a2ff`，元数据记录 `repository_commit=4c2200e...`、`working_tree_dirty=false`。
 
 ---
 
