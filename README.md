@@ -1,4 +1,4 @@
-# IncidentPilot V14.3 · 调查效率优化（5/5）
+# IncidentPilot V14.3 · 调查效率与 Evidence 合约优化
 
 V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 的五项可泛化优化已完成：阻止没有新证据时反复更新假设；为 `read_file` 增加最多 30 行的定向读取；让定向窗口的末端关键代码在 Observation 和压缩上下文中保持可见；识别同一文件已被成功 Observation 完整覆盖的读取范围；在调查预算结束时为最后一批新证据预留一次受限假设归类，并要求继续追踪抛错点的上游调用方和业务契约。相同五案例、Profile、预算和模型下的 V13/V14.3 单次对照已经完成；结果只适用于该固定小样本，不能外推为生产稳定性。
 
@@ -31,6 +31,8 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 正式 development 对照在干净提交 `234a2a4` 上按五个冻结案例、`full` Profile、每例一次完成。V14.3 通过 3/5（60%），V13 为 1/5（20%），通过率提高 40 个百分点；平均根因覆盖 40%→93.33%、代码覆盖 50%→100%、文档覆盖 20%→80%、引用/Evidence/Claim 覆盖均由 60%→100%，Observation 利用率 61.07%→70.62%。平均模型调用 9.8→8.6（下降 12.24%），平均 Token 57,336.6→52,684.2（下降 8.11%），格式修复 4→2、fallback 2→1；但平均工具调用 13.6→14.0（增加 2.94%），总耗时 262.84→321.25 秒（增加 22.22%），不能声称所有效率指标都改善。受限最后归类在 `connection_leak` 与 `retry_non_idempotent` 中各真实触发一次，前者生成合法报告，后者根因正确但最终 Evidence 越界且格式修复失败，验证器将其拒绝为 `invalid_synthesis`。
 
 两个失败均保留原判：`async_missing_await` 已正确说明漏写 `await` 和 coroutine object，但没有命中确定性标准中的中文关键词“协程”；`retry_non_idempotent` 的两个 confirmed 假设正确，但最终报告扩写了 Observation 未覆盖的来源并留下未被 Claim 使用的 Evidence。没有为提高通过率修改关键词、来源白名单或报告验证器。逐例审计与精确差值保存在 `demo_app/evals/results/v14.3-development.json`；被 Git 忽略的原始报告为 `.incident_reports/baselines/v14.3-development/v14.1-development-20260918-215356.json`，SHA-256 为 `3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e`。
+
+正式对照后针对 `retry_non_idempotent` 暴露的通用来源错配完成离线加固。总结与格式修复不再收到“Observation 内嵌 sources 数组”，而是收到逐条展开的精确 Evidence 来源白名单；每项直接包含 `observation_id/source_type/file/line_start/line_end/commit_hash/runtime_id`。成功但没有来源的 Observation（例如零命中的搜索）不进入白名单，只能作为推理线索；模型必须完整复制一个白名单对象，不能把一个 Observation ID 与另一个来源拼接。格式修复还明确要求整项替换或删除不合法 Evidence，并删除没有 Claim 使用的游离 Evidence。Provenance Validator 及评分标准没有放宽；该修复已通过离线回归，尚未进行付费复验。
 
 新增案例可离线复现：
 
@@ -594,7 +596,7 @@ main.py 格式化为人类可读文本
 生成 pending Incident Memory 候选，等待用户 approve/reject
 ```
 
-模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具；真正的文件、RAG、Git 和受限检查由本地 Python 函数完成。当前版本中模型先用 `list_checks` 查看公开检查，再把一个 ID 交给 `run_check`；Runtime 仍经过配置、Profile、人工授权和次数预算。最终总结和格式修复请求会收到严格 IncidentReport Schema 及可引用 Observation 来源白名单。若显式请求补丁，只有已通过验证的报告能进入 `propose_patch`；该节点只读取报告已经引用过的代码 Evidence，为模型提供精确当前内容、严格输出 Schema 和已登记检查 ID，然后把草稿交给本地校验器。若进一步请求隔离验证，`patch_review` 会在任何临时写入前暂停；批准后 `verify_patch` 只用确定性本地代码重新校验提案、复制项目、运行检查、应用 diff 和清理，不发生额外模型调用，也不写正式工作区。
+模型本身不能直接读取磁盘或启动进程。模型只能选择注册过的工具；真正的文件、RAG、Git 和受限检查由本地 Python 函数完成。当前版本中模型先用 `list_checks` 查看公开检查，再把一个 ID 交给 `run_check`；Runtime 仍经过配置、Profile、人工授权和次数预算。最终总结和格式修复请求会收到严格 IncidentReport Schema 及逐条展开的精确 Evidence 来源白名单；无来源 Observation 不会进入白名单。若显式请求补丁，只有已通过验证的报告能进入 `propose_patch`；该节点只读取报告已经引用过的代码 Evidence，为模型提供精确当前内容、严格输出 Schema 和已登记检查 ID，然后把草稿交给本地校验器。若进一步请求隔离验证，`patch_review` 会在任何临时写入前暂停；批准后 `verify_patch` 只用确定性本地代码重新校验提案、复制项目、运行检查、应用 diff 和清理，不发生额外模型调用，也不写正式工作区。
 
 在持久化模式中，LangGraph 每个超步的状态和 `interrupt()` 待续工作由 `SqliteSaver` 同步写盘。`incident_sessions` 表只是面向 CLI 的索引，保存问题、状态、审批请求和最终结果；图的真正恢复仍由 LangGraph Checkpoint 完成。`resume` 用同一 `thread_id` 和 `Command(resume=...)` 继续，不会把旧问题重新发给一个新 Agent。
 
@@ -737,11 +739,11 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 
 #### `synthesize_report`
 
-证据充分、达到调查/模型/工具硬预算，或第二次发现完全重复调用后，系统会在可用且必要时先完成最后证据归类，随后不再向模型提供工具，只要求它使用现有 Observation 和假设生成报告；预算不足以安全归类时则直接总结。此时上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
+证据充分、达到调查/模型/工具硬预算，或第二次发现完全重复调用后，系统会在可用且必要时先完成最后证据归类，随后不再向模型提供工具，只要求它使用现有 Observation 和假设生成报告；预算不足以安全归类时则直接总结。此时上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。报告契约把每个真实来源展开为一个完整可复制的 Evidence 白名单对象；无来源 Observation 不会成为候选。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
 
 #### `repair_report`
 
-如果无工具强制总结仍未通过 Pydantic 或 Provenance 验证，系统会再提供一次不带工具的严格 JSON 格式修复机会。修复请求包含具体字段路径、错误原因、上一次报告和完整证据候选，并明确要求在缺少 confirmed 假设时降低置信度。它不允许重新调查，避免已经取得的 Git 或代码证据因为一次格式错误全部丢失。
+如果无工具强制总结仍未通过 Pydantic 或 Provenance 验证，系统会再提供一次不带工具的严格 JSON 格式修复机会。修复请求包含具体字段路径、错误原因、上一次报告和扁平精确来源白名单，并明确要求在缺少 confirmed 假设时降低置信度；与白名单不匹配的旧 Evidence 必须整项替换或删除，不能只更换文件或行号后保留错误 Observation ID，未被 Claim 使用的 Evidence 也必须删除。它不允许重新调查，避免已经取得的 Git 或代码证据因为一次格式错误全部丢失。
 
 #### `build_fallback`
 
@@ -1399,7 +1401,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 194 项测试，覆盖：
+当前共有 196 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1431,6 +1433,8 @@ ExperimentRun
 - 完整开放假设集合至少提供一个结构化下一步动作，同时允许其他开放候选暂不重复规划；
 - 上下文压缩保留假设引用证据和最近未分类证据，并移除悬空 Tool 消息；
 - 最终总结上下文保留所有具有来源的成功 Observation；
+- 最终 Evidence 白名单按来源扁平展开，成功但无来源的 Observation 不会被误当成可引用证据；
+- Provenance 修复必须从精确白名单整项替换错误来源，并删除未被 Claim 使用的 Evidence；
 - 新证据未更新假设时阻止后续外部工具，更新完成后恢复调查；
 - 没有新 Observation 时从模型 Schema 隐藏假设工具，并在执行层拒绝兼容服务返回的未声明重复更新；
 - 连续两次无效假设更新触发受限总结，避免把全部模型预算耗在内部状态格式修复上；
@@ -1646,7 +1650,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 保留 3/5 的正式对照和两个失败原样，先为 `retry_non_idempotent` 暴露的通用报告来源越界补离线回归；任何修复都不能放宽 Evidence 白名单或针对 Case ID；
+1. 在干净提交上只复验一次 `retry_non_idempotent + full`，确认扁平白名单是否减少真实模型的 Evidence 错配；失败也不补跑；
 2. 保持当前 Agent 控制流稳定，按每批两个案例逐步扩展到 10–12 个可执行场景，并持续检查答案隔离；
 3. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。

@@ -184,6 +184,44 @@ class RoutingTests(unittest.TestCase):
         self.assertIn('"additionalProperties":false', contract)
         self.assertIn("obs-001", contract)
         self.assertIn("Claim.evidence_ids", contract)
+        whitelist = json.loads(
+            contract.split("允许引用的精确 Evidence 来源（扁平白名单）：\n", 1)[1]
+        )
+        self.assertEqual(whitelist, [{
+            "observation_id": "obs-001",
+            "source_type": "code",
+            "file": "main.py",
+            "line_start": 1,
+            "line_end": 2,
+            "commit_hash": None,
+            "runtime_id": None,
+        }])
+
+    def test_report_contract_omits_successful_observation_without_sources(self):
+        state = initial_state()
+        state["observations"] = [{
+            "observation_id": "obs-empty",
+            "tool_call_id": "call-empty",
+            "step": 1,
+            "tool_name": "search_code",
+            "arguments": {"query": "missing_symbol"},
+            "ok": True,
+            "repeated": False,
+            "sources": [],
+            "error": None,
+            "result_sha256": "digest",
+            "result_excerpt": "no matches",
+            "duration_ms": 1.0,
+        }]
+
+        contract = build_report_output_contract(state)
+        whitelist = json.loads(
+            contract.split("允许引用的精确 Evidence 来源（扁平白名单）：\n", 1)[1]
+        )
+
+        self.assertEqual(whitelist, [])
+        self.assertNotIn("obs-empty", contract)
+        self.assertIn("sources 为空的 Observation", contract)
 
     def test_model_routes_to_tools(self):
         state = initial_state()
@@ -1139,6 +1177,40 @@ class GraphFlowTests(unittest.TestCase):
         repair_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
         self.assertIn("suggested_fixes 必须是字符串数组", repair_prompt)
         self.assertIn("Claim.evidence_ids", repair_prompt)
+
+    def test_provenance_failure_repair_uses_flat_exact_source_whitelist(self):
+        invalid_report = json.loads(grounded_report())
+        invalid_report["evidence"][0]["file"] = "config.py"
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":10}'
+                    ),
+                },
+            }]),
+            FakeMessage(content=json.dumps(invalid_report)),
+            FakeMessage(content=grounded_report()),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=1)
+        )
+
+        self.assertEqual(result["stop_reason"], "completed")
+        self.assertTrue(result["repair_attempted"])
+        self.assertEqual(len(result["validation_errors"]), 1)
+        self.assertIn("不在 obs-001 的真实工具结果中", result["validation_errors"][0])
+        repair_prompt = client.fake_completions.requests[-1]["messages"][-1]["content"]
+        self.assertIn("允许引用的精确 Evidence 来源（扁平白名单）", repair_prompt)
+        self.assertIn("必须整项替换为一个白名单对象或删除", repair_prompt)
+        self.assertIn("删除未被任何 Claim 引用的 Evidence", repair_prompt)
+        self.assertIn('"observation_id":"obs-001"', repair_prompt)
+        self.assertIn('"file":"main.py"', repair_prompt)
+        self.assertNotIn('"sources":[', repair_prompt)
 
     def test_fallback_preserves_grounded_supported_hypothesis(self):
         client = FakeClient([

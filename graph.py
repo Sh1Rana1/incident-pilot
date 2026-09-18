@@ -447,12 +447,18 @@ def build_report_output_contract(state: AgentState) -> str:
     allowed_sources = []
     for raw in state.get("observations", []):
         observation = ToolObservation.model_validate(raw)
-        if not observation.ok:
+        if not observation.ok or not observation.sources:
             continue
-        allowed_sources.append({
-            "observation_id": observation.observation_id,
-            "sources": [source.model_dump(mode="json") for source in observation.sources],
-        })
+        for source in observation.sources:
+            allowed_sources.append({
+                "observation_id": observation.observation_id,
+                "source_type": source.source_type,
+                "file": source.file,
+                "line_start": source.line_start,
+                "line_end": source.line_end,
+                "commit_hash": source.commit_hash,
+                "runtime_id": source.runtime_id,
+            })
     schema = json.dumps(
         IncidentReport.model_json_schema(),
         ensure_ascii=False,
@@ -467,11 +473,15 @@ def build_report_output_contract(state: AgentState) -> str:
         "只输出一个符合下列 JSON Schema 的对象，不得增加 gaps、analysis、type "
         "或其他顶层字段。suggested_fixes 必须是字符串数组，不能放对象。\n"
         f"严格 JSON Schema：\n{schema}\n"
-        "Evidence.observation_id 只能从下方成功 Observation 中选择；file、行号、"
-        "commit_hash 和 runtime_id 必须复制对应 source。Evidence 自己创建 E1、E2 "
-        "等 evidence_id；每个 Claim.evidence_ids 只能引用最终 evidence 数组中真实"
-        "存在的 evidence_id，不能引用 Observation ID 或被省略的 Evidence。\n"
-        f"允许引用的 Observation 与来源：\n{sources}"
+        "Evidence 自己创建 E1、E2 等 evidence_id 和 description；除此之外，每条 "
+        "Evidence 的 observation_id、source_type、file、line_start、line_end、"
+        "commit_hash、runtime_id 七个字段必须完整复制下方某一个白名单对象，禁止从"
+        "不同对象拼接字段。没有来源、未列入白名单或 sources 为空的 Observation "
+        "只能用于推理，不能写成 Evidence。每条 Evidence 必须至少被一个 Claim 的 "
+        "evidence_ids 引用；删除无效、重复或未被 Claim 使用的 Evidence。"
+        "Claim.evidence_ids 只能引用最终 evidence 数组中真实存在的 evidence_id，"
+        "不能引用 Observation ID 或被省略的 Evidence。\n"
+        f"允许引用的精确 Evidence 来源（扁平白名单）：\n{sources}"
     )
 
 
@@ -1201,6 +1211,8 @@ def build_agent_graph(
                 "evidence、suggested_fixes、confidence。保留并修正已有 observation_id；"
                 "必须逐项解决压缩记忆中的 last_validation_error；若 high 缺少 confirmed "
                 "假设就降为 medium/low，不要丢弃已经落地的成功证据；"
+                "若旧 Evidence 不在扁平白名单中，必须整项替换为一个白名单对象或删除，"
+                "不能只改 file/行号后保留错误 observation_id；删除未被任何 Claim 引用的 Evidence；"
                 "Git 提交使用 commit_hash，不能把目录、unknown 或 N/A 当作文件。"
                 "\n\n" + report_contract
             ),

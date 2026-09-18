@@ -87,6 +87,15 @@
 - 五个案例最终引用均来自允许的业务代码或索引文档，Provenance 违规总数为 0。逐例审计和差值保存在 `demo_app/evals/results/v14.3-development.json`；原始报告 `.incident_reports/baselines/v14.3-development/v14.1-development-20260918-215356.json` 的 SHA-256 为 `3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e`。
 - 每个案例仅运行一次，以上是固定模型、固定五案例的小样本对照，不代表方差、稳定通过率或生产性能。
 
+### 正式对照后的 Evidence 合约加固
+
+- `retry_non_idempotent` 的失败显示，模型会把零命中 `search_code` 的 Observation ID 与另一个 RAG Observation 的文件和行号拼接。报告验证器正确拒绝了结果，但旧的嵌套来源提示仍给模型留下了错配空间。
+- 最终总结与格式修复的来源白名单改为逐来源扁平展开；每个对象直接包含 `observation_id/source_type/file/line_start/line_end/commit_hash/runtime_id`。模型必须完整复制同一对象，不能跨对象拼接字段。
+- 成功但没有任何来源的 Observation 不再进入 Evidence 白名单，只能保留为推理线索；格式修复明确要求把不匹配的 Evidence 整项替换或删除，并移除未被任何 Claim 使用的 Evidence。
+- Provenance Validator、Evidence/Claim Schema、Evaluation 标准、模型调用次数和格式修复次数上限均未改变；没有针对 Case ID 写规则，也没有自动把无效来源映射成合法来源。
+- 新增两项 Graph 回归测试，覆盖无来源 Observation 的白名单排除，以及文件与 Observation 错配后使用扁平精确来源完成一次修复。完整离线测试增至 196 项并全部通过。
+- 本阶段没有调用真实模型。后续只在干净提交上复验一次 `retry_non_idempotent + full`，失败不补跑。
+
 ---
 
 ## V14.1：Benchmark 首批两个案例（2026-09-18）
