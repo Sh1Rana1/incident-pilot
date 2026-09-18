@@ -94,7 +94,10 @@
 - 成功但没有任何来源的 Observation 不再进入 Evidence 白名单，只能保留为推理线索；格式修复明确要求把不匹配的 Evidence 整项替换或删除，并移除未被任何 Claim 使用的 Evidence。
 - Provenance Validator、Evidence/Claim Schema、Evaluation 标准、模型调用次数和格式修复次数上限均未改变；没有针对 Case ID 写规则，也没有自动把无效来源映射成合法来源。
 - 新增两项 Graph 回归测试，覆盖无来源 Observation 的白名单排除，以及文件与 Observation 错配后使用扁平精确来源完成一次修复。完整离线测试增至 196 项并全部通过。
-- 本阶段没有调用真实模型。后续只在干净提交上复验一次 `retry_non_idempotent + full`，失败不补跑。
+- 在干净提交 `38494ed` 上只复验一次 `retry_non_idempotent + full`，没有补跑。机器评分 1/1；根因、必需代码、引用、Evidence 与 Claim 覆盖均为 100%，Provenance 违规和 fallback 均为 0。模型调用 9 次、工具调用 15 次（唯一外部调用 12 次）、Token 55,142、耗时 57.12 秒、Observation 利用率 66.67%。
+- 报告正确给出“首次支付可能已成功、超时后因缺少幂等键再次扣款”的根因，并把 `run_case.py:58` 作为检测/失败位置。首次报告只有一项未被 Claim 使用的 `E2`，一次格式修复将其删除；正式对照中的 Observation ID 与 RAG 文件/行号错配没有重现。
+- 文档覆盖为 0%，因为本次 RAG 没有返回支付契约正文；报告保留契约未确认的不确定性，Fixture 读取也被既有隔离阻止。原始报告 `.incident_reports/eval-20260918-232704.json` 的 SHA-256 为 `bd3ba81c0615f299c60be8d526d29ed36ca15719c49c9cf25cbc0873e5c59cff`。
+- 该结果是修复后的单案例验收，不属于已冻结的五案例正式 V14.3 对照，未覆盖 `demo_app/evals/results/v14.3-development.json` 中的 3/5 结果。
 
 ---
 

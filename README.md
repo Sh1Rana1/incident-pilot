@@ -32,7 +32,9 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 
 两个失败均保留原判：`async_missing_await` 已正确说明漏写 `await` 和 coroutine object，但没有命中确定性标准中的中文关键词“协程”；`retry_non_idempotent` 的两个 confirmed 假设正确，但最终报告扩写了 Observation 未覆盖的来源并留下未被 Claim 使用的 Evidence。没有为提高通过率修改关键词、来源白名单或报告验证器。逐例审计与精确差值保存在 `demo_app/evals/results/v14.3-development.json`；被 Git 忽略的原始报告为 `.incident_reports/baselines/v14.3-development/v14.1-development-20260918-215356.json`，SHA-256 为 `3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e`。
 
-正式对照后针对 `retry_non_idempotent` 暴露的通用来源错配完成离线加固。总结与格式修复不再收到“Observation 内嵌 sources 数组”，而是收到逐条展开的精确 Evidence 来源白名单；每项直接包含 `observation_id/source_type/file/line_start/line_end/commit_hash/runtime_id`。成功但没有来源的 Observation（例如零命中的搜索）不进入白名单，只能作为推理线索；模型必须完整复制一个白名单对象，不能把一个 Observation ID 与另一个来源拼接。格式修复还明确要求整项替换或删除不合法 Evidence，并删除没有 Claim 使用的游离 Evidence。Provenance Validator 及评分标准没有放宽；该修复已通过离线回归，尚未进行付费复验。
+正式对照后针对 `retry_non_idempotent` 暴露的通用来源错配完成加固。总结与格式修复不再收到“Observation 内嵌 sources 数组”，而是收到逐条展开的精确 Evidence 来源白名单；每项直接包含 `observation_id/source_type/file/line_start/line_end/commit_hash/runtime_id`。成功但没有来源的 Observation（例如零命中的搜索）不进入白名单，只能作为推理线索；模型必须完整复制一个白名单对象，不能把一个 Observation ID 与另一个来源拼接。格式修复还明确要求整项替换或删除不合法 Evidence，并删除没有 Claim 使用的游离 Evidence。Provenance Validator 及评分标准没有放宽。
+
+该项在干净提交 `38494ed` 上只运行了一次 `retry_non_idempotent + full`，机器评分 1/1；根因、必需代码、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0，fallback 0。Agent 正确识别“首次支付可能已在服务端成功、客户端因超时重试、请求没有幂等键，因此发生重复扣款”，并把 `run_case.py:58` 区分为检测/失败位置。首次生成的报告只有一项未被 Claim 使用的 Evidence `E2`，唯一一次格式修复将其删除；没有再出现 Observation ID 与文件/行号错配。模型调用 9 次、工具调用 15 次，其中唯一外部调用 12 次，Token 55,142、耗时 57.12 秒、Observation 利用率 66.67%。文档覆盖为 0%，因为本次 RAG 没有返回支付契约正文；报告据实保留“契约未确认”的不确定性，Fixture 读取也被隔离规则阻止。原始报告为 `.incident_reports/eval-20260918-232704.json`，SHA-256 为 `bd3ba81c0615f299c60be8d526d29ed36ca15719c49c9cf25cbc0873e5c59cff`。这是修复后的单案例验收，不属于已冻结的五案例正式对照，也不覆盖 `demo_app/evals/results/v14.3-development.json` 中的 3/5 结果。
 
 新增案例可离线复现：
 
@@ -1650,8 +1652,8 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 在干净提交上只复验一次 `retry_non_idempotent + full`，确认扁平白名单是否减少真实模型的 Evidence 错配；失败也不补跑；
-2. 保持当前 Agent 控制流稳定，按每批两个案例逐步扩展到 10–12 个可执行场景，并持续检查答案隔离；
+1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
+2. 保持当前 Agent 控制流不变，按每批两个案例逐步扩展到 10–12 个可执行场景；每批补齐故障代码、复现入口、日志、业务文档、Harness 和 Evaluation 标准，并检查答案隔离；
 3. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
