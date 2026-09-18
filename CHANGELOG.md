@@ -77,6 +77,16 @@
 - 在干净提交 `f43f30d` 上只运行一次 `missing_user_id + full`，机器评分 1/1；根因、必需代码、文档、引用、Evidence 与 Claim 均为 100%，Provenance 违规、重复调用和 fallback 均为 0。模型读取缺字段调用、API、Service、Repository 和 API 契约，明确区分 Service failure site 与 API 入口校验根因，形成 3 个 confirmed 假设并提前结束；模型调用 9 次、工具调用 13 次、Token 51,686、耗时 57.30 秒、Observation 利用率 77.78%，格式修复 1 次。
 - 本次 `final_classification_count=0`，因为最后证据已在第 7 个调查步骤正常归类并触发早停；真实运行验证了上游根因追踪与新指标兼容性，但没有触发预算末尾受限归类分支。该分支的行为、安全拒绝和预算边界仍由离线回归确定性验收，不能把本次 1/1 误写成真实触发证明。原始报告 `.incident_reports/eval-20260918-212806.json` 的 SHA-256 为 `f6a6ecc35a6e0880dbc31826f2c29f6081ac225b1265b2cfc1b8ba80d1eaa23b`。
 
+### 正式 development 对照
+
+- 在干净提交 `234a2a4` 上以与 V13 相同的五个 development 案例、`full` Profile、每例一次和相同硬预算运行正式 V14.3 对照；没有补跑失败案例。
+- 通过率由 V13 的 1/5（20%）提升到 3/5（60%），提高 40 个百分点。平均根因覆盖 40%→93.33%、代码覆盖 50%→100%、文档覆盖 20%→80%、引用/Evidence/Claim 覆盖均为 60%→100%，Observation 利用率 61.07%→70.62%。
+- 平均模型调用 9.8→8.6（下降 12.24%），平均 Token 57,336.6→52,684.2（下降 8.11%），格式修复 4→2，fallback 2→1，未引用成功 Observation 17→13。平均工具调用 13.6→14.0（增加 2.94%），总耗时 262.84→321.25 秒（增加 22.22%），所以不宣称所有性能指标都改善。
+- `connection_leak` 与 `retry_non_idempotent` 各真实触发一次预算末尾受限归类；前者通过，后者虽然形成两个 confirmed 假设并找到正确根因，但最终 Evidence 来源越界且格式修复仍失败，按 `invalid_synthesis` 保持失败。
+- `async_missing_await` 的报告正确识别漏写 `await`、coroutine object 和异步契约，但未命中确定性标准中的中文关键词“协程”，按原标准保持失败；没有事后放宽关键词或评分阈值。
+- 五个案例最终引用均来自允许的业务代码或索引文档，Provenance 违规总数为 0。逐例审计和差值保存在 `demo_app/evals/results/v14.3-development.json`；原始报告 `.incident_reports/baselines/v14.3-development/v14.1-development-20260918-215356.json` 的 SHA-256 为 `3df3d595413c8646d6dfb1493c80e4412076b6c3806e842262708df456c3d64e`。
+- 每个案例仅运行一次，以上是固定模型、固定五案例的小样本对照，不代表方差、稳定通过率或生产性能。
+
 ---
 
 ## V14.1：Benchmark 首批两个案例（2026-09-18）
