@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from statistics import mean
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -57,6 +57,29 @@ class CaseScores(StrictModel):
     passed: bool
 
 
+class LLMJudgeAssessment(StrictModel):
+    root_cause_completeness: int = Field(ge=1, le=5)
+    failure_site_distinction: int = Field(ge=1, le=5)
+    fix_actionability: int = Field(ge=1, le=5)
+    omission_severity: Literal["none", "minor", "major", "critical"]
+    missing_aspects: list[str] = Field(max_length=8)
+    rationale: str = Field(min_length=1, max_length=2_000)
+
+
+class LLMJudgeResult(StrictModel):
+    status: Literal["completed", "error"]
+    model: str
+    deterministic_pass: bool
+    semantic_pass: bool | None = None
+    average_score: float | None = None
+    assessment: LLMJudgeAssessment | None = None
+    error: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    duration_ms: float = 0.0
+
+
 class CaseEvaluation(StrictModel):
     case_id: str
     question: str
@@ -68,6 +91,7 @@ class CaseEvaluation(StrictModel):
     hypotheses: list[DiagnosticHypothesis]
     validation_errors: list[str] = Field(default_factory=list)
     scores: CaseScores
+    llm_judge: LLMJudgeResult | None = None
 
 
 class EvaluationSummary(StrictModel):

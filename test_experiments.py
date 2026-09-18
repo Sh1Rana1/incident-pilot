@@ -9,7 +9,11 @@ import tools  # noqa: F401：触发全部工具注册
 import runtime_tools  # noqa: F401：触发 V9 Runtime 工具注册
 from experiments import run_experiment, save_experiment
 from registry import registry
-from run_evals import enforce_experiment_cost_guard, format_summary
+from run_evals import (
+    enforce_experiment_cost_guard,
+    enforce_judge_cost_guard,
+    format_summary,
+)
 from test_evaluation import fake_result, missing_user_case
 from tool_profiles import TOOL_PROFILES, resolve_tool_profile
 
@@ -59,6 +63,12 @@ class ExperimentTests(unittest.TestCase):
         enforce_experiment_cost_guard(54, confirmed=True)
         with self.assertRaisesRegex(SystemExit, "费用保护"):
             enforce_experiment_cost_guard(4, confirmed=False)
+
+    def test_judge_cost_guard_requires_confirmation_above_three_calls(self) -> None:
+        enforce_judge_cost_guard(3, confirmed=False)
+        enforce_judge_cost_guard(15, confirmed=True)
+        with self.assertRaisesRegex(SystemExit, "Judge 费用保护"):
+            enforce_judge_cost_guard(4, confirmed=False)
 
     def test_profiles_and_repeated_runs_are_aggregated(self) -> None:
         calls: list[tuple[str, int, str]] = []

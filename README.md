@@ -1,6 +1,8 @@
-# IncidentPilot V14.7 · Deterministic Benchmark Audit
+# IncidentPilot V14.8 · Optional LLM Judge
 
-V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计，把划分、资产、复现、Harness 映射、RAG 可发现性、答案隔离、评分关键词来源和冻结报告哈希纳入同一份机器可读报告；它不创建模型客户端，也不调用 DeepSeek。
+V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge，专门评价根因完整性、报错点与系统根因的区分、修复可执行性和明显遗漏。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
+
+LLM Judge 是旁路语义评分，不是新的通过门槛：本地确定性评测仍独占引用真实性、Evidence 落地、Claim 覆盖、Runtime 要求和最终 `passed`。Judge 每份最终报告最多调用一次，不使用工具、不读取 Observation 来源、不自动重试或格式修复；高分不能挽救确定性失败，低分也不能撤销确定性通过。`ENABLE_LLM_JUDGE=false` 且未传 `--judge` 时，现有 Evaluation 的调用次数和费用完全不变。
 
 审计发现并修复了五处“评分术语在允许取证材料中缺少字面支撑”的数据质量问题：异步契约补充 `coroutine/await`，分页契约补充 `1-based`，支付契约补充“超时”，事务契约补充 `rollback`。没有改动 `graph.py`、评分器、冻结的 V13/V14.3 结果或任何 Case ID 专用调查规则。相同五案例、Profile、预算和模型下的历史单次对照继续保持冻结；新 hidden 案例不回写历史结果，也不能把单次小样本外推为生产稳定性。
 
@@ -175,6 +177,11 @@ HITL_TOOL_CALL_THRESHOLD=10
 ENABLE_RUNTIME_TOOLS=false
 MAX_RUNTIME_CALLS=1
 RUNTIME_TIMEOUT_SECONDS=5
+ENABLE_LLM_JUDGE=false
+JUDGE_API_KEY=
+JUDGE_BASE_URL=
+JUDGE_MODEL=
+JUDGE_OUTPUT_MODE=auto
 ```
 
 字段含义：
@@ -194,6 +201,11 @@ RUNTIME_TIMEOUT_SECONDS=5
 | `ENABLE_RUNTIME_TOOLS` | 否 | 是否向交互式 Agent 暴露预登记 Runtime/Harness 工具，默认 `false` |
 | `MAX_RUNTIME_CALLS` | 否 | 一次调查最多实际执行多少个预登记检查，默认 1 |
 | `RUNTIME_TIMEOUT_SECONDS` | 否 | 每次运行的全局超时上限，默认 5；会与清单超时取较小值 |
+| `ENABLE_LLM_JUDGE` | 否 | 是否允许 `run_evals.py --judge` 发起语义评审，默认 `false` |
+| `JUDGE_API_KEY` | 否 | Judge 专用密钥；留空时复用 `API_KEY` |
+| `JUDGE_BASE_URL` | 否 | Judge 专用 OpenAI-compatible 地址；留空时复用 `BASE_URL` |
+| `JUDGE_MODEL` | 否 | Judge 模型 ID；留空时复用 `MODEL` |
+| `JUDGE_OUTPUT_MODE` | 否 | Judge 的 `auto/json_schema/json_object/text` 输出模式，默认按 Judge 地址自动判断 |
 
 `OUTPUT_MODE=auto` 的当前策略：
 
@@ -490,6 +502,7 @@ incident-pilot/
 ├── .incident_state/           # Checkpoint/会话/Runtime 账本（自动生成）
 ├── tool_profiles.py            # Profile 工具白名单与文档路径隔离
 ├── evaluation.py              # 单案例确定性评分
+├── llm_judge.py               # 默认关闭的单次语义质量评审
 ├── experiments.py             # Profile、Case、重复运行与统计聚合
 ├── run_evals.py               # 真实模型评测命令行
 ├── knowledge/
@@ -1230,6 +1243,39 @@ AgentRunResult
 
 普通 `run_agent()` 仍然只返回 `IncidentReport`，保持现有调用方兼容。
 
+### 10.4 可选 LLM Judge
+
+Judge 只接收案例问题、异常类型、期望根因概念和最终报告中的 `summary/root_cause/claims/suggested_fixes/confidence`，故意不接收 Observation、文件行号或 Evidence 来源。它输出三个 1–5 分、遗漏严重度、缺失点和简短理由：
+
+```text
+root_cause_completeness
+failure_site_distinction
+fix_actionability
+omission_severity: none | minor | major | critical
+missing_aspects[]
+rationale
+```
+
+本地代码根据固定规则生成独立 `semantic_pass`：根因完整度至少 4、报错点区分和修复可执行性至少 3，且遗漏不超过 minor。`CaseEvaluation.scores.passed` 始终只来自确定性规则；Judge 结果单独保存在 `llm_judge` 字段。调用失败或 JSON 不合法时保存 `status=error`，不重试、不丢弃确定性结果，并继续记录已经产生的 Judge Token。
+
+启用同模型 Judge：
+
+```env
+ENABLE_LLM_JUDGE=true
+# JUDGE_* 留空，自动复用 API_KEY / BASE_URL / MODEL
+```
+
+然后只评一个案例：
+
+```powershell
+.\.venv\Scripts\python.exe run_evals.py `
+  --case missing_user_id `
+  --profile full `
+  --judge
+```
+
+如需独立模型，只修改 `JUDGE_API_KEY/JUDGE_BASE_URL/JUDGE_MODEL`。超过三个报告时，Judge 与 Agent 调查都要求显式 `--yes`；开始前会打印最多增加的 Judge 调用数。Judge 模型、输出模式、完成/失败次数、语义通过率、三项平均分和独立 Token 会写入 JSON 与终端汇总。由于同模型自评可能存在偏好，正式简历结论应注明 Judge 模型；有条件时再使用不同模型做最终 hidden set 语义评审。
+
 ## 11. 工具消融、Runtime Evidence、成本与稳定性实验
 
 ### 11.1 四种 Profile
@@ -1360,6 +1406,7 @@ development 的标准三种 Profile × 五个 Case × 三次等于 45 次 Agent 
 --baseline-label ID  保存不可覆盖的正式基线；要求工作区干净
 --yes                显式确认超过 3 次真实 Agent 调查
 --allow-runtime      预授权 full_runtime 执行预登记 Demo Case
+--judge              每份最终报告追加一次旁路 LLM 语义评审；需同时打开环境开关
 ```
 
 `--compare` 和 `--profile` 互斥。开始前程序会打印即将进行的 Agent 调查总数。
@@ -1419,9 +1466,10 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 198 项测试，覆盖：
+当前共有 204 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
+- LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1621,7 +1669,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 ### Evaluation 答案正确但没有通过
 
-当前根因评分仍然是字面关键词规则。正确同义表达可能造成假阴性。先查看 JSON 中缺失的具体关键词，不要只看总通过率。未来将使用同义概念组和 LLM Judge 做混合评测。
+当前确定性根因评分仍然是字面关键词规则。正确同义表达可能造成假阴性。先查看 JSON 中缺失的具体关键词，不要只看总通过率；需要语义复核时可显式开启 V14.8 LLM Judge，但它不会改写确定性判定。后续仍可增加可审计的同义概念组。
 
 ### 为什么现在通常不需要手动 resume
 
@@ -1649,7 +1697,7 @@ ModuleNotFoundError: No module named 'langgraph'
 - Case、代码注释和事故文档比较明确，存在玩具数据集偏简单的问题；
 - 根因关键词不理解同义词，也可能被关键词投机；
 - Observation 能确认模型实际看过来源，但不能完全判断自然语言 Claim 与证据的语义蕴含关系；
-- 当前没有 LLM-as-a-Judge；
+- LLM Judge 已实现但默认关闭；复用诊断模型时存在同模型自评偏差，而且它只评价报告语义，不能证明 Evidence 真实或 Claim 与来源严格蕴含；
 - 已记录服务商返回的 Token，但尚未根据不同模型价格计算真实金额；服务商不返回 usage 时 Token 显示 0；
 - 普通 Observation 只保存最多 1,000 字符结果摘要和 SHA-256；成功的定向 `read_file` 为避免末端代码丢失，会保存最多 4,000 字符的紧凑行号摘要。单行特别长时仍会按窗口行数缩短，完整工具内容主要保留在 LangGraph 消息状态中；
 - 发给模型的压缩记忆将普通 Observation 摘要限制为 700 字符，定向文件窗口限制为 4,000 字符；普通调查只保留所有已引用证据和最近 4 条未引用结果，最终报告阶段则恢复全部带来源的成功结果。其他长结果中的次要细节仍可能被省略，但本地 Checkpoint 中的完整消息不会被删除；
@@ -1682,7 +1730,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
 2. Expanded Benchmark 已达到十二个可执行场景；十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离、关键词来源和冻结结果哈希已纳入 V14.7 完整确定性审计；
-3. 下一阶段加入默认关闭、每份报告只调用一次的 LLM Judge，用于识别 `async_missing_await` 这类语义正确但词法未命中的报告，同时不替代本地引用真实性判断；
+3. V14.8 已加入默认关闭、每份报告只调用一次的旁路 LLM Judge；下一步先用同模型单案例烟雾验证协议，再决定是否用独立 Judge 模型评审 hidden set，且始终不替代本地引用真实性判断；
 4. 最后补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。

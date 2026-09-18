@@ -446,6 +446,7 @@ def run_deterministic_audit(
         ],
         "benchmark.py",
         "evaluation.py",
+        "llm_judge.py",
         "harness.py",
         "run_evals.py",
     ]

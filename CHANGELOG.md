@@ -13,6 +13,17 @@
 
 ---
 
+## V14.8：默认关闭的 LLM Judge（2026-09-19）
+
+- 新增 `llm_judge.py`：每份最终报告最多发起一次无工具、无自动重试的结构化语义评审，评分根因完整性、failure site 与系统根因区分、修复可执行性及遗漏严重度。格式错误保存为 `status=error`，不追加格式修复调用；服务商已返回的 Token 仍会记录。
+- Judge 只接收案例目标和最终报告的语义字段，不接收 Observation、Evidence 来源或文件行号；引用真实性、Evidence/Claim 落地、Runtime 要求和确定性 `passed` 继续完全由本地代码裁决。新增双向隔离回归：Judge 高分不能挽救确定性失败，低分不能撤销确定性通过。
+- `run_evals.py` 新增 `--judge`；同时要求 `ENABLE_LLM_JUDGE=true`，超过三份报告还需 `--yes`。未启用时既有 Evaluation 不增加任何请求。终端和 JSON 新增 Judge 完成/错误数、语义通过率、三项平均分和独立 Token 统计。
+- 默认复用 `API_KEY/BASE_URL/MODEL`；可通过 `JUDGE_API_KEY/JUDGE_BASE_URL/JUDGE_MODEL/JUDGE_OUTPUT_MODE` 切换独立 OpenAI-compatible Judge。创建 Judge 客户端时关闭 SDK 自动重试，确保应用层一份报告只有一次请求。
+- `llm_judge.py` 加入 Agent 文件工具和 Patch Proposal 保护清单；`doctor` 只显示 Judge 开关与模型名，不输出任何密钥。`api.env.example`、README 和实验元数据同步更新。
+- 新增六项离线测试，覆盖同服务默认配置、独立模型覆盖、单次无工具请求、结构化分数、无效 JSON 不重试、双向硬门槛隔离、终端聚合及 Judge 费用保护；完整 204 项测试、`doctor` 和 119 项静态确定性审计全部通过。用当前 `judge=off` 配置实测 `--judge` 会在 Agent 调用前退出；本阶段未调用真实模型。
+
+---
+
 ## V14.7：完整确定性审计（2026-09-19）
 
 - `benchmark.py` 新增一键确定性审计与 JSON 报告：检查十五个 Evaluation 的唯一划分、文件名与 Case ID、资产存在性、Runtime 标记、评分关键词来源、RAG 可发现性、错误日志、Agent 文件边界、十二个复现入口和二十二个 Harness Check 的映射。

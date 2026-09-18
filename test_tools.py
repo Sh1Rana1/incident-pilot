@@ -195,7 +195,7 @@ class FileToolTests(unittest.TestCase):
     def test_all_tests_and_runtime_internals_are_hidden(self) -> None:
         blocked = {
             "test_graph.py", "test_doctor.py", "harness.py",
-            "runtime_tools.py", "doctor.py", "benchmark.py",
+            "runtime_tools.py", "doctor.py", "benchmark.py", "llm_judge.py",
         }
         listed = call_tool("list_files", {"path": ".", "max_depth": 1})
         listed_paths = {item["path"] for item in listed.data["entries"]}

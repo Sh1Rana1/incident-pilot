@@ -6,7 +6,12 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from statistics import mean, pstdev
 
-from evaluation import CaseEvaluation, EvaluationCase, score_case
+from evaluation import (
+    CaseEvaluation,
+    EvaluationCase,
+    LLMJudgeResult,
+    score_case,
+)
 from models import AgentRunResult, StrictModel
 from tool_profiles import resolve_tool_profile
 
@@ -63,6 +68,15 @@ class ProfileSummary(StrictModel):
     fallback_rate: float
     tool_usage_counts: dict[str, int]
     total_duration_ms: float
+    judge_attempt_count: int = 0
+    judge_completed_count: int = 0
+    judge_error_count: int = 0
+    judge_semantic_pass_count: int = 0
+    judge_semantic_pass_rate: float = 0.0
+    average_judge_root_cause_completeness: float = 0.0
+    average_judge_failure_site_distinction: float = 0.0
+    average_judge_fix_actionability: float = 0.0
+    total_judge_token_count: int = 0
 
 
 class ExperimentMetadata(StrictModel):
@@ -85,6 +99,9 @@ class ExperimentMetadata(StrictModel):
     max_tool_calls: int
     max_tools_per_step: int
     baseline_label: str | None = None
+    judge_enabled: bool = False
+    judge_model: str | None = None
+    judge_output_mode: str | None = None
 
 
 class ExperimentRun(StrictModel):
@@ -98,6 +115,9 @@ class ExperimentRun(StrictModel):
 
 
 ExperimentRunner = Callable[[str, int, str], AgentRunResult]
+ExperimentJudgeRunner = Callable[
+    [EvaluationCase, CaseEvaluation], LLMJudgeResult
+]
 
 
 def _rate(value: int, total: int) -> float:
@@ -138,6 +158,13 @@ def summarize_attempts(
     synthesis_count = sum(item.metrics.synthesis_used for item in attempts)
     early_stop_count = sum(item.metrics.early_stopped for item in attempts)
     fallback_count = sum(item.metrics.stop_reason != "completed" for item in attempts)
+    judge_results = [
+        item.llm_judge for item in attempts if item.llm_judge is not None
+    ]
+    completed_judges = [
+        item for item in judge_results
+        if item.status == "completed" and item.assessment is not None
+    ]
     tool_usage = Counter(
         tool_name
         for item in attempts
@@ -214,6 +241,26 @@ def summarize_attempts(
         fallback_rate=_rate(fallback_count, attempt_count),
         tool_usage_counts=dict(sorted(tool_usage.items())),
         total_duration_ms=round(sum(item.metrics.duration_ms for item in attempts), 2),
+        judge_attempt_count=len(judge_results),
+        judge_completed_count=len(completed_judges),
+        judge_error_count=sum(item.status == "error" for item in judge_results),
+        judge_semantic_pass_count=sum(
+            item.semantic_pass is True for item in completed_judges
+        ),
+        judge_semantic_pass_rate=_rate(
+            sum(item.semantic_pass is True for item in completed_judges),
+            len(completed_judges),
+        ),
+        average_judge_root_cause_completeness=_average(
+            item.assessment.root_cause_completeness for item in completed_judges
+        ),
+        average_judge_failure_site_distinction=_average(
+            item.assessment.failure_site_distinction for item in completed_judges
+        ),
+        average_judge_fix_actionability=_average(
+            item.assessment.fix_actionability for item in completed_judges
+        ),
+        total_judge_token_count=sum(item.total_tokens for item in judge_results),
     )
 
 
@@ -224,6 +271,7 @@ def run_experiment(
     profiles: list[str],
     runs_per_case: int = 1,
     max_steps: int = 8,
+    judge_runner: ExperimentJudgeRunner | None = None,
 ) -> ExperimentRun:
     if not cases:
         raise ValueError("没有可运行的评测案例")
@@ -248,6 +296,10 @@ def run_experiment(
                 evaluation = score_case(case, result, project_root).model_copy(
                     update={"profile": profile, "run_index": run_index}
                 )
+                if judge_runner is not None:
+                    evaluation = evaluation.model_copy(update={
+                        "llm_judge": judge_runner(case, evaluation),
+                    })
                 attempts.append(evaluation)
 
     profile_summaries = [

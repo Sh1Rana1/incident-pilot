@@ -86,7 +86,8 @@ def run_doctor(
                 "api.env",
                 True,
                 f"model={config.model}, output_mode={config.output_mode}, "
-                f"runtime={'on' if config.runtime_tools_enabled else 'off'}",
+                f"runtime={'on' if config.runtime_tools_enabled else 'off'}, "
+                f"judge={'on:' + config.judge_model if config.judge_enabled else 'off'}",
             ))
         except Exception as exc:
             checks.append(DoctorCheck("api.env", False, str(exc)))

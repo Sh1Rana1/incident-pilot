@@ -22,6 +22,7 @@ from experiments import (
     run_experiment,
     save_experiment,
 )
+from llm_judge import create_judge_runner
 from tool_profiles import STANDARD_EXPERIMENT_PROFILES, TOOL_PROFILES
 
 
@@ -30,6 +31,7 @@ DEFAULT_CASES_DIR = ROOT / "demo_app" / "evals"
 DEFAULT_MANIFEST_PATH = DEFAULT_CASES_DIR / "_benchmark_manifest.json"
 DEFAULT_OUTPUT_DIR = ROOT / ".incident_reports"
 MAX_UNCONFIRMED_INVESTIGATIONS = 3
+MAX_UNCONFIRMED_JUDGE_CALLS = 3
 
 
 def enforce_experiment_cost_guard(
@@ -41,6 +43,15 @@ def enforce_experiment_cost_guard(
             f"费用保护：本次将运行 {investigation_count} 次 Agent 调查，"
             f"超过免确认上限 {MAX_UNCONFIRMED_INVESTIGATIONS}。请先用 --case 缩小范围；"
             "确实需要完整实验时显式追加 --yes。"
+        )
+
+
+def enforce_judge_cost_guard(judge_call_count: int, confirmed: bool) -> None:
+    if judge_call_count > MAX_UNCONFIRMED_JUDGE_CALLS and not confirmed:
+        raise SystemExit(
+            f"Judge 费用保护：本次最多新增 {judge_call_count} 次 LLM Judge 调用，"
+            f"超过免确认上限 {MAX_UNCONFIRMED_JUDGE_CALLS}。请缩小案例范围；"
+            "确实需要完整评审时显式追加 --yes。"
         )
 
 
@@ -147,6 +158,19 @@ def format_summary(result: ExperimentRun) -> str:
                 f"{summary.tool_call_count_stddev:<4.2f}"
             )
     overall = result.overall_summary
+    if overall.judge_attempt_count:
+        rows.extend([
+            "",
+            "LLM Judge（旁路语义评分，不改变确定性通过结果）",
+            f"完成 {overall.judge_completed_count}/{overall.judge_attempt_count}；"
+            f"错误 {overall.judge_error_count}；语义通过 "
+            f"{overall.judge_semantic_pass_count}/{overall.judge_completed_count} "
+            f"({overall.judge_semantic_pass_rate:.0%})；"
+            f"根因完整度 {overall.average_judge_root_cause_completeness:.2f}/5；"
+            f"报错点区分 {overall.average_judge_failure_site_distinction:.2f}/5；"
+            f"修复可执行性 {overall.average_judge_fix_actionability:.2f}/5；"
+            f"Judge Token {overall.total_judge_token_count}",
+        ])
     rows.extend([
         "-" * 104,
         f"总计：{overall.passed_count}/{overall.attempt_count} 通过 "
@@ -214,6 +238,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="明确允许 full_runtime Profile 执行预登记 Demo Case",
     )
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help=(
+            "对每份最终报告追加一次 LLM 语义评审；还需在 api.env 设置 "
+            "ENABLE_LLM_JUDGE=true"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -250,12 +282,24 @@ def main() -> None:
     if arguments.baseline_label and working_tree_dirty:
         raise SystemExit("正式 baseline 要求 Git 工作区干净，请先提交当前数据集版本。")
     config = load_config(ROOT)
+    if arguments.judge and not config.judge_enabled:
+        raise SystemExit(
+            "--judge 需要在 api.env 显式设置 ENABLE_LLM_JUDGE=true。"
+        )
     investigation_count = len(profiles) * len(cases) * arguments.runs
     print(
         f"将运行 {investigation_count} 次 Agent 调查："
         f"{len(profiles)} 个 Profile × {len(cases)} 个案例 × {arguments.runs} 次。"
     )
     enforce_experiment_cost_guard(investigation_count, arguments.yes)
+    judge_call_count = investigation_count if arguments.judge else 0
+    enforce_judge_cost_guard(judge_call_count, arguments.yes)
+    judge_runner = create_judge_runner(config) if arguments.judge else None
+    if arguments.judge:
+        print(
+            f"LLM Judge 已开启：模型 {config.judge_model}；最多追加 "
+            f"{judge_call_count} 次单次无工具评审。"
+        )
 
     def runner(question: str, max_steps: int, profile: str):
         return run_agent_detailed(
@@ -272,6 +316,7 @@ def main() -> None:
         profiles,
         arguments.runs,
         arguments.max_steps,
+        judge_runner=judge_runner,
     )
     result = result.model_copy(update={"metadata": ExperimentMetadata(
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -292,6 +337,11 @@ def main() -> None:
         max_tool_calls=config.max_tool_calls,
         max_tools_per_step=config.max_tools_per_step,
         baseline_label=arguments.baseline_label,
+        judge_enabled=arguments.judge,
+        judge_model=config.judge_model if arguments.judge else None,
+        judge_output_mode=(
+            config.judge_output_mode if arguments.judge else None
+        ),
     )})
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = arguments.output

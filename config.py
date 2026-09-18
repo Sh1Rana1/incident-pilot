@@ -18,6 +18,11 @@ class AppConfig:
     model: str
     output_mode: OutputMode
     strict_tools: bool
+    judge_enabled: bool = False
+    judge_api_key: str = ""
+    judge_base_url: str = ""
+    judge_model: str = ""
+    judge_output_mode: OutputMode = "json_object"
     max_model_calls: int = 10
     max_tool_calls: int = 20
     max_tools_per_step: int = 3
@@ -78,6 +83,18 @@ def load_config(root: Path) -> AppConfig:
         os.getenv("OUTPUT_MODE", "auto"),
         os.getenv("STRICT_TOOLS", "auto"),
     )
+    judge_enabled = _parse_bool(
+        os.getenv("ENABLE_LLM_JUDGE", "false"),
+        "ENABLE_LLM_JUDGE",
+    )
+    judge_api_key = os.getenv("JUDGE_API_KEY", "").strip() or api_key
+    judge_base_url = os.getenv("JUDGE_BASE_URL", "").strip() or base_url
+    judge_model = os.getenv("JUDGE_MODEL", "").strip() or model
+    judge_output_mode, _ = resolve_capabilities(
+        judge_base_url,
+        os.getenv("JUDGE_OUTPUT_MODE", "auto"),
+        "false",
+    )
     def positive_int(name: str, default: int) -> int:
         raw = os.getenv(name, str(default)).strip()
         try:
@@ -94,6 +111,11 @@ def load_config(root: Path) -> AppConfig:
         model,
         output_mode,
         strict_tools,
+        judge_enabled=judge_enabled,
+        judge_api_key=judge_api_key,
+        judge_base_url=judge_base_url,
+        judge_model=judge_model,
+        judge_output_mode=judge_output_mode,
         max_model_calls=positive_int("MAX_MODEL_CALLS", 10),
         max_tool_calls=positive_int("MAX_TOOL_CALLS", 20),
         max_tools_per_step=positive_int("MAX_TOOLS_PER_STEP", 3),
