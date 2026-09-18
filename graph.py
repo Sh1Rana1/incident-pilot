@@ -52,7 +52,7 @@ from runtime_tools import (
 )
 from tool_profiles import RUNTIME_EXECUTION_TOOLS
 import harness  # noqa: F401：导入时注册 Harness 工具
-import tools  # noqa: F401：导入时触发工具注册
+import tools  # 同时提供工具注册、读取参数模型与安全路径规范化
 
 
 SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的代码故障分析 Agent。
@@ -64,7 +64,7 @@ SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的�
 成功保存假设后，在取得新的成功 Observation 之前不要再次调用 update_hypotheses；应执行已规划的外部调查动作。
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
-search_code 已给出命中行时，优先用 read_file 的 start_line/end_line 读取命中附近不超过 30 行，不要反复读取整个文件。
+search_code 已给出命中行时，优先用 read_file 的 start_line/end_line 读取命中附近不超过 30 行，不要反复读取整个文件。调用 read_file 前检查压缩记忆中的成功读取范围：新窗口已被覆盖时直接复用原 Observation；只有确实补充新行时才允许部分重叠。
 当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 仍可复现四个固定案例。这些工具都不能接受 Shell 命令。
 run_check/run_demo_case 返回的 exception_message、failed_tests 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
 当某个假设已由至少两项独立来源确认时，应停止扩散调查并输出最终报告。
@@ -301,6 +301,77 @@ def tool_call_signature(name: str, arguments: str) -> str:
     except (json.JSONDecodeError, TypeError):
         normalized_arguments = str(arguments).strip()
     return f"{name}:{normalized_arguments}"
+
+
+def _normalized_project_path(path: str) -> str | None:
+    """把合法项目路径转成统一形式；非法路径留给工具注册器拒绝。"""
+    try:
+        return tools._relative_path(tools._safe_path(path)).casefold()
+    except (OSError, ValueError):
+        return None
+
+
+def covered_read_observation_ids(
+    arguments_json: str,
+    observations: list[ToolObservation],
+) -> list[str]:
+    """返回完整覆盖新定向读取窗口的成功 read_file Observation。"""
+    try:
+        arguments = tools.ReadFileArgs.model_validate_json(arguments_json)
+    except ValidationError:
+        return []
+    if arguments.start_line is None and arguments.end_line is None:
+        # 整文件读取的实际结束行只有执行后才知道；精确重复仍由 signature 处理。
+        return []
+    requested_start = arguments.start_line or 1
+    requested_end = (
+        arguments.end_line
+        if arguments.end_line is not None
+        else requested_start + tools.MAX_READ_LINES - 1
+    )
+    if (
+        requested_end < requested_start
+        or requested_end - requested_start + 1 > tools.MAX_READ_LINES
+    ):
+        return []
+    requested_path = _normalized_project_path(arguments.path)
+    if requested_path is None:
+        return []
+
+    ranges: list[tuple[int, int, str]] = []
+    for observation in observations:
+        if (
+            observation.tool_name != "read_file"
+            or not observation.ok
+            or observation.repeated
+        ):
+            continue
+        for source in observation.sources:
+            if (
+                source.line_start is None
+                or source.line_end is None
+                or _normalized_project_path(source.file) != requested_path
+            ):
+                continue
+            ranges.append((
+                source.line_start,
+                source.line_end,
+                observation.observation_id,
+            ))
+
+    cursor = requested_start
+    covering_ids: list[str] = []
+    for line_start, line_end, observation_id in sorted(ranges):
+        if line_end < cursor:
+            continue
+        if line_start > cursor:
+            break
+        if observation_id not in covering_ids:
+            covering_ids.append(observation_id)
+        cursor = max(cursor, line_end + 1)
+        if cursor > requested_end:
+            return covering_ids
+    return []
 
 
 def parse_incident_report(content: str) -> IncidentReport:
@@ -630,14 +701,31 @@ def build_agent_graph(
             observation_id = f"obs-{len(state.get('observations', [])) + len(observations) + 1:03d}"
             started_at = perf_counter()
             repeated = False
-            if signature in known_signatures:
+            coverage_ids = (
+                covered_read_observation_ids(
+                    arguments,
+                    existing_observations + [
+                        ToolObservation.model_validate(item) for item in observations
+                    ],
+                )
+                if name == "read_file" and signature not in known_signatures
+                else []
+            )
+            if signature in known_signatures or coverage_ids:
                 repeated_count += 1
                 repeated = True
-                result = json.dumps({
-                    "ok": False,
-                    "error": "相同工具和参数已经调用过，请使用已有结果并生成最终报告。",
-                    "meta": {"reason": "duplicate_tool_call"},
-                }, ensure_ascii=False)
+                if coverage_ids:
+                    result = ToolResult.failure(
+                        "请求的文件行范围已由成功 Observation 完整覆盖；"
+                        "请复用已有证据，或只读取尚未覆盖的新行。",
+                        reason="duplicate_read_range",
+                        covered_by_observation_ids=coverage_ids,
+                    ).model_dump_json()
+                else:
+                    result = ToolResult.failure(
+                        "相同工具和参数已经调用过，请使用已有结果并生成最终报告。",
+                        reason="duplicate_tool_call",
+                    ).model_dump_json()
                 print(f"跳过重复工具调用: {name}({arguments})")
             else:
                 runtime_block_reason: str | None = None

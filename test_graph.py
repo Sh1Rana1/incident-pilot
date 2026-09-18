@@ -20,8 +20,9 @@ from graph import (
     response_usage,
     parse_incident_report,
     tool_call_signature,
+    covered_read_observation_ids,
 )
-from models import PatchVerificationResult
+from models import PatchVerificationResult, ToolObservation
 from tool_profiles import TOOL_PROFILES
 
 
@@ -215,6 +216,55 @@ class RoutingTests(unittest.TestCase):
         first = tool_call_signature("search_code", '{"query":"x","path":"."}')
         second = tool_call_signature("search_code", '{"path":".","query":"x"}')
         self.assertEqual(first, second)
+
+    def test_read_range_coverage_can_span_successful_observations(self):
+        observations = [
+            {
+                "observation_id": "obs-001",
+                "tool_call_id": "call-1",
+                "step": 1,
+                "tool_name": "read_file",
+                "arguments": {
+                    "path": "main.py", "start_line": 1, "end_line": 10,
+                },
+                "ok": True,
+                "repeated": False,
+                "sources": [{
+                    "source_type": "code", "file": "main.py",
+                    "line_start": 1, "line_end": 10,
+                }],
+                "error": None,
+                "result_sha256": "a",
+                "result_excerpt": "first",
+                "duration_ms": 1.0,
+            },
+            {
+                "observation_id": "obs-002",
+                "tool_call_id": "call-2",
+                "step": 1,
+                "tool_name": "read_file",
+                "arguments": {
+                    "path": ".\\main.py", "start_line": 11, "end_line": 20,
+                },
+                "ok": True,
+                "repeated": False,
+                "sources": [{
+                    "source_type": "code", "file": "main.py",
+                    "line_start": 11, "line_end": 20,
+                }],
+                "error": None,
+                "result_sha256": "b",
+                "result_excerpt": "second",
+                "duration_ms": 1.0,
+            },
+        ]
+
+        covered_by = covered_read_observation_ids(
+            '{"path":"main.py","start_line":5,"end_line":15}',
+            [ToolObservation.model_validate(item) for item in observations],
+        )
+
+        self.assertEqual(covered_by, ["obs-001", "obs-002"])
 
     def test_response_usage_supports_provider_usage_objects(self):
         response = SimpleNamespace(usage=SimpleNamespace(
@@ -764,6 +814,109 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(result["repeated_tool_call_count"], 2)
         self.assertTrue(result["synthesis_attempted"])
         self.assertNotIn("tools", client.fake_completions.requests[-1])
+
+    def test_covered_read_range_is_rejected_as_semantic_duplicate(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":20}'
+                    ),
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-2",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":5,"end_line":15}'
+                    ),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertEqual(result["repeated_tool_call_count"], 1)
+        self.assertTrue(result["observations"][0]["ok"])
+        self.assertFalse(result["observations"][1]["ok"])
+        self.assertTrue(result["observations"][1]["repeated"])
+        duplicate_result = next(
+            message["content"]
+            for message in result["messages"]
+            if message.get("tool_call_id") == "call-2"
+        )
+        self.assertIn("duplicate_read_range", duplicate_result)
+        self.assertIn("obs-001", duplicate_result)
+
+    def test_partially_overlapping_read_with_new_lines_executes(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":20}'
+                    ),
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-2",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":15,"end_line":30}'
+                    ),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertEqual(result["repeated_tool_call_count"], 0)
+        self.assertTrue(result["observations"][0]["ok"])
+        self.assertTrue(result["observations"][1]["ok"])
+        self.assertFalse(result["observations"][1]["repeated"])
+
+    def test_failed_read_does_not_establish_semantic_coverage(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":60}'
+                    ),
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-2",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":20,"end_line":49}'
+                    ),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertFalse(result["observations"][0]["ok"])
+        self.assertEqual(result["observations"][0]["error"], "定向读取单次最多 30 行，请缩小范围")
+        self.assertTrue(result["observations"][1]["ok"])
+        self.assertEqual(result["repeated_tool_call_count"], 0)
 
     def test_invalid_synthesis_gets_one_format_repair(self):
         client = FakeClient([
