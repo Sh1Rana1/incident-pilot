@@ -33,7 +33,7 @@ def observation(observation_id: str, file: str, source_type: str = "code") -> To
 
 
 class HypothesisTests(unittest.TestCase):
-    def test_open_hypothesis_requires_structured_next_action(self) -> None:
+    def test_open_hypothesis_set_requires_one_structured_next_action(self) -> None:
         payload = json.dumps({"hypotheses": [{
             "hypothesis_id": "H1",
             "statement": "尚待验证的配置问题",
@@ -47,7 +47,39 @@ class HypothesisTests(unittest.TestCase):
         parsed, result = parse_hypothesis_update(payload, [])
 
         self.assertIsNone(parsed)
-        self.assertIn("结构化 next_action", result)
+        self.assertIn("完整假设集合至少需要一个", result)
+
+    def test_only_one_open_hypothesis_needs_to_plan_next_action(self) -> None:
+        payload = json.dumps({"hypotheses": [{
+            "hypothesis_id": "H1",
+            "statement": "入口缺少校验",
+            "status": "supported",
+            "confidence": 0.7,
+            "supporting_observation_ids": ["obs-001"],
+            "contradicting_observation_ids": [],
+            "next_action": None,
+        }, {
+            "hypothesis_id": "H2",
+            "statement": "服务层契约不一致",
+            "status": "unverified",
+            "confidence": 0.4,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "purpose": "检查服务层契约",
+                "supports_if": "调用约定不一致",
+                "rejects_if": "调用约定一致",
+            },
+        }]})
+
+        parsed, result = parse_hypothesis_update(
+            payload,
+            [observation("obs-001", "demo_app/app/api.py")],
+        )
+
+        self.assertIsNotNone(parsed)
+        self.assertTrue(json.loads(result)["ok"])
 
     def test_high_confidence_report_requires_confirmed_hypothesis(self) -> None:
         report = IncidentReport(

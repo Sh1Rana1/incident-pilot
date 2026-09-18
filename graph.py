@@ -58,9 +58,10 @@ import tools  # noqa: F401：导入时触发工具注册
 SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的代码故障分析 Agent。
 你的任务是根据用户给出的报错，在当前项目中搜索和读取代码，找到根因。
 先提出 2–4 个可证伪的候选根因，并调用 update_hypotheses 保存；再选择最能区分候选假设、成本最低的工具，不要无目的遍历项目。
-未确认假设的 next_action 必须包含 tool_name、purpose、supports_if、rejects_if，只规划一个最有信息增益的下一动作。
+完整假设集合中至少一个未确认或仅 supported 的假设必须提供 next_action，包含 tool_name、purpose、supports_if、rejects_if；不要求每个仍开放的候选都重复规划动作。
 获得新证据后调用 update_hypotheses 更新完整假设集合：支持、反证、置信度和下一步动作都要来自真实 Observation。
 只要上一轮产生了新的成功 Observation，下一轮必须先成功调用 update_hypotheses；完成更新前不要继续调用外部工具。
+成功保存假设后，在取得新的成功 Observation 之前不要再次调用 update_hypotheses；应执行已规划的外部调查动作。
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
 当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 仍可复现四个固定案例。这些工具都不能接受 Shell 命令。
@@ -115,6 +116,7 @@ class AgentState(TypedDict):
     context_compaction_count: int
     confirmed_at_tool_call_count: Optional[int]
     hypothesis_update_required: bool
+    hypothesis_update_failure_count: int
     runtime_tools_enabled: bool
     runtime_execution_preapproved: bool
     runtime_execution_decision: Optional[str]
@@ -282,6 +284,13 @@ def route_after_runtime_review(state: AgentState) -> str:
     return "execute_tools"
 
 
+def hypothesis_update_allowed(state: AgentState) -> bool:
+    """只允许建立初始假设，或把一批新成功 Observation 归类一次。"""
+    return not state.get("hypotheses") or state.get(
+        "hypothesis_update_required", False
+    )
+
+
 def tool_call_signature(name: str, arguments: str) -> str:
     """将参数规范化，识别 JSON 键顺序不同但语义相同的重复调用。"""
     try:
@@ -414,7 +423,8 @@ def build_agent_graph(
             strict=config.strict_tools,
             allowed_tools=allowed_tools,
         )
-        tool_schemas.append(hypothesis_tool_schema())
+        if hypothesis_update_allowed(state):
+            tool_schemas.append(hypothesis_tool_schema())
         messages, compacted = request_messages(state)
         request = {
             "model": config.model,
@@ -507,6 +517,9 @@ def build_agent_graph(
         per_step_limit = state.get("max_tools_per_step", config.max_tools_per_step)
         executed_external_count = 0
         hypothesis_update_required = state.get("hypothesis_update_required", False)
+        hypothesis_update_failure_count = state.get(
+            "hypothesis_update_failure_count", 0
+        )
         new_successful_observation = False
         protected_access_attempted = False
         runtime_call_count = state.get("runtime_call_count", 0)
@@ -572,15 +585,28 @@ def build_agent_graph(
                 continue
 
             if name == HYPOTHESIS_TOOL_NAME:
-                parsed, result = parse_hypothesis_update(
-                    arguments,
-                    existing_observations + [
-                        ToolObservation.model_validate(item) for item in observations
-                    ],
+                update_allowed = (
+                    not current_hypotheses or hypothesis_update_required
                 )
+                if not update_allowed:
+                    parsed = None
+                    result = ToolResult.failure(
+                        "没有新的成功 Observation，当前不允许再次更新假设；"
+                        "请执行已有 next_action 对应的外部调查工具。",
+                        tool=HYPOTHESIS_TOOL_NAME,
+                        reason="hypothesis_update_not_allowed",
+                    ).model_dump_json()
+                else:
+                    parsed, result = parse_hypothesis_update(
+                        arguments,
+                        existing_observations + [
+                            ToolObservation.model_validate(item) for item in observations
+                        ],
+                    )
                 if parsed is not None:
                     current_hypotheses = parsed
                     hypothesis_update_required = False
+                    hypothesis_update_failure_count = 0
                     print(
                         "更新诊断假设: "
                         + ", ".join(
@@ -589,6 +615,7 @@ def build_agent_graph(
                         )
                     )
                 else:
+                    hypothesis_update_failure_count += 1
                     print(f"假设更新失败: {result[:500]}")
                 tool_messages.append({
                     "role": "tool",
@@ -730,6 +757,7 @@ def build_agent_graph(
             "force_synthesis": (
                 state.get("repeated_tool_call_count", 0) + repeated_count >= 2
                 or len(calls) > remaining_budget
+                or hypothesis_update_failure_count >= 2
             ),
             "observations": observations,
             "hypotheses": [item.model_dump(mode="json") for item in current_hypotheses],
@@ -740,6 +768,7 @@ def build_agent_graph(
             "hypothesis_update_required": (
                 hypothesis_update_required or new_successful_observation
             ),
+            "hypothesis_update_failure_count": hypothesis_update_failure_count,
             "runtime_execution_decision": None,
             "runtime_call_count": runtime_call_count,
             "successful_runtime_call_count": successful_runtime_call_count,

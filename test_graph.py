@@ -122,6 +122,7 @@ def initial_state(max_steps=8):
         "hitl_tool_threshold": 10,
         "cancelled": False,
         "hypothesis_update_required": False,
+        "hypothesis_update_failure_count": 0,
         "runtime_tools_enabled": False,
         "runtime_execution_preapproved": False,
         "runtime_execution_decision": None,
@@ -529,6 +530,175 @@ class GraphFlowTests(unittest.TestCase):
         self.assertIn("上一轮的新证据尚未写入假设", result["observations"][1]["error"])
         self.assertFalse(any("search_code" in item for item in result["tool_call_signatures"]))
         self.assertTrue(any("config.py" in item for item in result["tool_call_signatures"]))
+
+    def test_hypothesis_tool_is_hidden_until_new_observation_exists(self):
+        initial_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口配置可能有误",
+                "status": "unverified",
+                "confidence": 0.4,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "list_files",
+                    "purpose": "定位入口文件",
+                    "supports_if": "入口文件存在",
+                    "rejects_if": "入口文件不存在",
+                },
+            }],
+        })
+        evidence_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口配置可能有误",
+                "status": "supported",
+                "confidence": 0.6,
+                "supporting_observation_ids": ["obs-001"],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "读取入口文件",
+                    "supports_if": "配置不一致",
+                    "rejects_if": "配置一致",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": initial_update,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-list", "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "arguments": '{"path":".","max_depth":1}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": evidence_update,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        schema_names = [
+            {
+                schema["function"]["name"]
+                for schema in request.get("tools", [])
+            }
+            for request in client.fake_completions.requests[:3]
+        ]
+        self.assertIn("update_hypotheses", schema_names[0])
+        self.assertNotIn("update_hypotheses", schema_names[1])
+        self.assertIn("update_hypotheses", schema_names[2])
+        self.assertEqual(result["hypothesis_update_failure_count"], 0)
+        self.assertEqual(result["stop_reason"], "completed")
+
+    def test_undeclared_hypothesis_repeat_is_rejected_by_execution_layer(self):
+        initial_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口配置可能有误",
+                "status": "unverified",
+                "confidence": 0.4,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "list_files",
+                    "purpose": "定位入口文件",
+                    "supports_if": "入口文件存在",
+                    "rejects_if": "入口文件不存在",
+                },
+            }],
+        })
+        evidence_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口配置可能有误",
+                "status": "supported",
+                "confidence": 0.6,
+                "supporting_observation_ids": ["obs-001"],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "读取入口文件",
+                    "supports_if": "配置不一致",
+                    "rejects_if": "配置一致",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": initial_update,
+                },
+            }]),
+            # 模拟兼容服务无视第二轮工具 Schema，仍返回未声明的内部工具。
+            FakeMessage(tool_calls=[{
+                "id": "call-h-repeat", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": initial_update,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-list", "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "arguments": '{"path":".","max_depth":1}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": evidence_update,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertTrue(any(
+            "hypothesis_update_not_allowed" in message.get("content", "")
+            for message in result["messages"]
+            if message.get("role") == "tool"
+        ))
+        self.assertEqual(result["hypotheses"][0]["status"], "supported")
+        self.assertEqual(result["hypothesis_update_failure_count"], 0)
+        self.assertEqual(result["stop_reason"], "completed")
+
+    def test_two_invalid_hypothesis_updates_force_bounded_synthesis(self):
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-bad-1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": '{}',
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-bad-2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": '{}',
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(initial_state())
+
+        self.assertEqual(result["hypothesis_update_failure_count"], 2)
+        self.assertEqual(result["step_count"], 2)
+        self.assertTrue(result["synthesis_attempted"])
+        self.assertEqual(result["stop_reason"], "completed")
 
     def test_max_steps_executes_tool_then_synthesizes_report(self):
         client = FakeClient([

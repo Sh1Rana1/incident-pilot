@@ -1,16 +1,18 @@
-# IncidentPilot V14.1 · Benchmark 首批扩充（V13 Agent）
+# IncidentPilot V14.3 · 假设更新空转控制
 
-当前增加两个离线故障案例：异步资料查询与订单支付重试。共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。Agent 控制流、Prompt、预算、报告校验和评分规则保持 V13；尚无可用的正式 V13 基线或 V14 性能提升数据。
+V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 当前只完成第一项可泛化优化：阻止没有新证据时反复更新假设，并修正整组 `next_action` 的校验粒度；尚未产生 V14 对照实验数据，不能声称通过率或成本已经提升。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
 本阶段补上所有 `test_*.py`、`checks`、Harness/Runtime 实现、Fixture 和 Eval 的文件工具隔离。三个直接写出旧案例根因和修复的事故文档已移除，业务代码中的答案式注释也已清理；Evaluation 改为引用正常的 API、数据库和 Runbook 契约。`_benchmark_manifest.json` 冻结开发、hidden、challenge 和 Runtime 集合，默认实验只选择 development。
 
-2026-09-18 首次 `missing_user_id + full` 烟雾运行虽然得到 1/1，但搜索结果暴露了 `test_graph.py`，最终报告还把测试中的标准结论列为 Evidence，因此该报告已移入 `.incident_reports/quarantine/v13/` 并标记 invalid，不能作为基线或简历数据。发现后的隔离修复只做离线验证，尚未再次调用模型。
+2026-09-18 首次 `missing_user_id + full` 烟雾运行虽然得到 1/1，但搜索结果暴露了 `test_graph.py`，最终报告还把测试中的标准结论列为 Evidence，因此该报告已移入 `.incident_reports/quarantine/v13/` 并标记 invalid，不能作为基线或简历数据。之后完成隔离修复并重新取得了来源审计通过的正式基线。
 
 隔离修复提交 `3c1b4b8` 上的第二次单案例运行来源审计通过，可作为 V13 development 基线样本。结果为 0/1：根因关键词 33%、代码文件覆盖 50%、文档覆盖 0%，引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0；模型调用 10 次、工具调用 13 次、Token 61,085、耗时 60.58 秒、格式修复 1 次、fallback 0 次、Observation 利用率 83%。Agent 找到了 Service 的 `payload["user_id"]` 直接报错点，但没有读取 API 入口或业务契约，8 步的后半段连续更新假设，因此遗漏“API 缺少校验”这一系统根因。该结果是单案例单次样本，不能外推为总体通过率。
 
 五个 development 案例的 V13 基线现已完成，每例一次，来源审计全部通过。总体通过 1/5（20%），平均根因覆盖 40%、代码文件覆盖 50%、文档覆盖 20%、引用有效率 60%、Observation 利用率 61%；平均每例 9.8 次模型调用、13.6 次工具调用和 57,337 Token，总 Token 286,683、总耗时 262.84 秒。格式修复 4/5，fallback 2/5，Provenance 违规和重复工具调用均为 0。只有 `retry_non_idempotent` 通过；详细逐例数据保存在 `demo_app/evals/results/v13-v14.1-development.json`。这是固定模型与配置下的单次小样本，后续只能与相同五案例、Profile 和预算的 V14 结果比较。
+
+V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_mismatch + full` 付费验收：由 V13 的失败变为 1/1 通过，根因与代码文件覆盖均为 100%，引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规 0；模型调用由 10 降为 5，工具调用由 12 降为 8，Token 由 56,844 降为 22,005，耗时由 50.15 秒降为 22.28 秒，格式修复由 1 次降为 0，fallback 保持 0。Agent 在第 4 个调查步骤形成 confirmed 假设并提前总结，没有重现 V13 第 5–8 步的假设更新空转。Observation 利用率由 83% 降为 60%，文档覆盖仍为 0%，说明这次修复解决的是控制流浪费，不代表所有质量指标都提升。该结果是单案例单次验收，报告为 `.incident_reports/eval-20260918-190005.json`，不能替代后续五案例正式 V14 对照。
 
 新增案例可离线复现：
 
@@ -605,6 +607,7 @@ main.py 格式化为人类可读文本
 | `context_compaction_count` | 实际使用压缩请求上下文的模型调用次数 |
 | `confirmed_at_tool_call_count` | 首次形成 confirmed 假设时的工具调用计数，用于测量确认后的浪费 |
 | `hypothesis_update_required` | 新成功 Observation 是否仍待写入假设；为真时外部工具暂时关闭 |
+| `hypothesis_update_failure_count` | 连续无效或越权假设更新次数；达到 2 次后停止工具调查并用现有证据总结 |
 | `validation_errors` | 历次报告格式、假设准备度和 Provenance 验证错误，只追加不覆盖 |
 | `evidence_sufficient / early_stopped` | 是否满足确定性证据充分度并提前收尾 |
 | `human_review_*` | 是否启用 HITL、触发原因、次数和是否已经处理 |
@@ -630,13 +633,13 @@ main.py 格式化为人类可读文本
 
 #### `call_model`
 
-先通过 `context_manager.py` 生成压缩请求，再把当前 Profile 的外部工具、内部 `update_hypotheses` Schema 和输出格式发送给模型。普通压缩记忆包含完整假设、假设所引用的全部 Observation，以及最近 4 条尚未归类的 Observation；每条结果摘要最多 700 字符，但保留 ID、参数、成功状态和精确来源。若上一轮产生了新成功证据，请求中会追加醒目的控制门提示，模型必须先更新假设。模型先提出 2–4 个可证伪候选根因，再用最有区分度的工具验证；也可以在证据足够时直接生成最终 JSON。
+先通过 `context_manager.py` 生成压缩请求，再把当前 Profile 的外部工具和输出格式发送给模型。`update_hypotheses` Schema 只在尚未建立初始假设，或已有新成功 Observation 等待归类时开放；成功保存假设后会暂时从 Schema 隐藏，直到外部调查产生新证据。普通压缩记忆包含完整假设、假设所引用的全部 Observation，以及最近 4 条尚未归类的 Observation；每条结果摘要最多 700 字符，但保留 ID、参数、成功状态和精确来源。若上一轮产生了新成功证据，请求中会追加醒目的控制门提示，模型必须先更新假设。模型先提出 2–4 个可证伪候选根因，再用最有区分度的工具验证；也可以在证据足够时直接生成最终 JSON。
 
-未确认或仅 supported 的假设必须提供结构化 `next_action`：`tool_name` 表示下一项工具，`purpose` 解释信息价值，`supports_if` 和 `rejects_if` 预先声明什么结果会支持或否定它。这迫使调查先说明“为什么查”，而不是漫无目的地遍历文件。
+只要完整集合中仍存在 `unverified` 或 `supported` 假设，就至少要有一个开放假设提供结构化 `next_action`：`tool_name` 表示下一项工具，`purpose` 解释信息价值，`supports_if` 和 `rejects_if` 预先声明什么结果会支持或否定它。不再要求每一个开放候选都重复规划动作，避免某个已获得支持但暂时无需继续验证的候选使整批更新失败。
 
 #### `execute_tools`
 
-外部工具按名称进入注册器，使用 Pydantic 校验参数并执行。每个外部调用生成唯一 `obs-xxx`，记录参数、状态、来源、摘要哈希和耗时。内部 `update_hypotheses` 不访问工作区，也不生成可用于 Evidence 的 Observation；它只能引用已经存在且成功的 Observation，并用完整集合替换图中的假设状态。已有假设时，只要一轮生成新成功 Observation，`hypothesis_update_required` 就会开启；下一轮在假设更新成功前提出的外部调用会收到 `hypothesis_update_required`，不会实际执行。
+外部工具按名称进入注册器，使用 Pydantic 校验参数并执行。每个外部调用生成唯一 `obs-xxx`，记录参数、状态、来源、摘要哈希和耗时。内部 `update_hypotheses` 不访问工作区，也不生成可用于 Evidence 的 Observation；它只能引用已经存在且成功的 Observation，并用完整集合替换图中的假设状态。已有假设时，只要一轮生成新成功 Observation，`hypothesis_update_required` 就会开启；下一轮在假设更新成功前提出的外部调用会收到 `hypothesis_update_required`，不会实际执行。反方向也有执行层保护：没有新成功 Observation 时，即使兼容服务返回未在 Schema 中声明的 `update_hypotheses`，也会收到 `hypothesis_update_not_allowed`，不能覆盖状态。首次格式错误后允许一次纠正，连续两次无效更新则立即关闭工具并进入总结。
 
 工具硬预算在执行层再次检查。超过 `MAX_TOOL_CALLS` 的请求不会执行，并收到 `tool_budget_exhausted`，随后图进入总结，不能靠一次并行请求绕过预算。同一轮超过 `MAX_TOOLS_PER_STEP` 的调用收到 `per_step_tool_limit`，但不会立刻强制总结；模型下一轮可以根据已有结果重新排序，只选择信息价值最高的动作。
 
@@ -1362,7 +1365,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 173 项测试，覆盖：
+当前共有 177 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1387,10 +1390,12 @@ ExperimentRun
 - LangGraph 路由、报告重试、预算和强制总结；
 - 内部假设工具的格式、ID、成功 Observation 与状态约束；
 - 两项独立来源早停和单条证据不早停；
-- 开放假设必须提供结构化下一步调查动作；
+- 完整开放假设集合至少提供一个结构化下一步动作，同时允许其他开放候选暂不重复规划；
 - 上下文压缩保留假设引用证据和最近未分类证据，并移除悬空 Tool 消息；
 - 最终总结上下文保留所有具有来源的成功 Observation；
 - 新证据未更新假设时阻止后续外部工具，更新完成后恢复调查；
+- 没有新 Observation 时从模型 Schema 隐藏假设工具，并在执行层拒绝兼容服务返回的未声明重复更新；
+- 连续两次无效假设更新触发受限总结，避免把全部模型预算耗在内部状态格式修复上；
 - JSON 代码块及前后说明文字解析、详细验证错误持久化；
 - 最终格式修复失败时，从真实 Observation 构造有来源的降级报告；
 - 空 Evidence 报告的引用有效率记为 0%，不再显示误导性的 100%；
@@ -1598,10 +1603,11 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 将 V13 作为稳定基线：运行 `doctor`，手工验收一次 `--with-patch` 只读提案、一次 `--verify-patch` 行为失败和一次真正 `verified`；
-2. V14 将本地确定性规则与 LLM Judge 组合，并增加真实费用、多模型对比和 Judge 一致性评测；
-3. 后续扩展隐藏评测集，分离开发集与测试集；需要多用户部署时再将 Checkpointer 和 Memory Store 换为服务端数据库；
-4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
+1. 按“一项优化、离线回归、单案例真实验收”的节奏实现不超过 30 行的定向 `read_file`，然后再处理关键证据压缩；
+2. 继续实现语义重复检测、最后证据归类和抛错点后的上游契约追踪，每项都只重跑一个对应失败案例；
+3. 使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照，再逐批扩展到 10–12 个可执行场景；
+4. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，最后补充命令行产品演示；
+5. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。
 

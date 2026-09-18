@@ -116,6 +116,7 @@ def run_agent_detailed(
         "context_compaction_count": 0,
         "confirmed_at_tool_call_count": None,
         "hypothesis_update_required": False,
+        "hypothesis_update_failure_count": 0,
         "runtime_tools_enabled": runtime_tools_enabled,
         "runtime_execution_preapproved": allow_runtime_execution,
         "runtime_execution_decision": None,

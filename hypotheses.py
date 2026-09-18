@@ -78,10 +78,17 @@ def parse_hypothesis_update(
             errors.append(f"{hypothesis.hypothesis_id} 的 {hypothesis.status} 状态缺少支持证据")
         if hypothesis.status == "rejected" and not hypothesis.contradicting_observation_ids:
             errors.append(f"{hypothesis.hypothesis_id} 的 rejected 状态缺少反证")
-        if hypothesis.status in {"unverified", "supported"} and hypothesis.next_action is None:
-            errors.append(
-                f"{hypothesis.hypothesis_id} 的 {hypothesis.status} 状态缺少结构化 next_action"
-            )
+    open_hypotheses = [
+        hypothesis
+        for hypothesis in update.hypotheses
+        if hypothesis.status in {"unverified", "supported"}
+    ]
+    if open_hypotheses and not any(
+        hypothesis.next_action is not None for hypothesis in open_hypotheses
+    ):
+        errors.append(
+            "完整假设集合至少需要一个 unverified/supported 假设提供结构化 next_action"
+        )
     if errors:
         return None, ToolResult.failure(
             "；".join(errors),
