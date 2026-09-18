@@ -73,7 +73,9 @@
 - 系统提示明确区分异常抛出行这一 failure site 与系统根因；定位异常行后必须继续检查至少一个上游调用方及相关接口或业务契约。遇到 `KeyError`、缺字段或非法输入时优先核对 API/入口校验，不能只把下游下标访问改成 `.get()`。
 - `RunMetrics` 新增兼容默认值为 0 的 `final_classification_count`，记录受限归类是否实际发生；旧结果文件仍可读取。
 - 新增五项 Graph 回归测试，覆盖待归类证据与三次预算门、单次归类路由、failure site 提示、最后成功 Observation 的归类，以及兼容服务越权外部工具的执行层拒绝。完整离线测试增至 194 项并全部通过。
-- 没有修改 Evaluation 标准、Benchmark 数据、工具 Profile、文件隔离、Evidence/Claim 来源验证、默认模型/工具预算或 Runtime 安全边界。真实 `missing_user_id + full` 验收将在干净提交上只运行一次后记录。
+- 没有修改 Evaluation 标准、Benchmark 数据、工具 Profile、文件隔离、Evidence/Claim 来源验证、默认模型/工具预算或 Runtime 安全边界。
+- 在干净提交 `f43f30d` 上只运行一次 `missing_user_id + full`，机器评分 1/1；根因、必需代码、文档、引用、Evidence 与 Claim 均为 100%，Provenance 违规、重复调用和 fallback 均为 0。模型读取缺字段调用、API、Service、Repository 和 API 契约，明确区分 Service failure site 与 API 入口校验根因，形成 3 个 confirmed 假设并提前结束；模型调用 9 次、工具调用 13 次、Token 51,686、耗时 57.30 秒、Observation 利用率 77.78%，格式修复 1 次。
+- 本次 `final_classification_count=0`，因为最后证据已在第 7 个调查步骤正常归类并触发早停；真实运行验证了上游根因追踪与新指标兼容性，但没有触发预算末尾受限归类分支。该分支的行为、安全拒绝和预算边界仍由离线回归确定性验收，不能把本次 1/1 误写成真实触发证明。原始报告 `.incident_reports/eval-20260918-212806.json` 的 SHA-256 为 `f6a6ecc35a6e0880dbc31826f2c29f6081ac225b1265b2cfc1b8ba80d1eaa23b`。
 
 ---
 

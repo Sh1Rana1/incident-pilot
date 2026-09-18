@@ -24,7 +24,9 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 
 该项在干净提交 `2cc5f0a` 上只运行了一次 `missing_user_id + full`，机器评分继续为 1/1；根因、代码文件、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规、格式修复和 fallback 均为 0。报告仍完整说明“缺少 `user_id` 的案例输入 → API 原样透传 → Service 下标访问触发 `KeyError`”，但置信度为 medium、没有 confirmed 假设或早停，文档覆盖仍为 0%，三条成功 Observation 未用于报告。模型调用 9 次、工具调用 16 次、Token 42,336、耗时 42.28 秒、Observation 利用率 66.67%。本次唯一重复是精确相同的 `search_code("user_id")`，没有提出被旧范围完整覆盖的新 `read_file` 窗口，因此只能作为无回归验收，不能声称真实模型运行触发了新分支；区间去重行为由离线执行层回归确定性验证。模型还产生了三次超过 30 行的失败读取和一次 Profile 不允许的 `list_checks`，说明工具规划仍有优化空间。原始报告为 `.incident_reports/eval-20260918-201809.json`，SHA-256 为 `a3050fb4c5bf0e672990b1b15de61b6849822522ed5fecd2c4fb7f0980b477c0`。
 
-第五项优化新增独立的 `classify_final_evidence` 节点：如果最后一个调查步骤产生了尚未归类的成功 Observation，且总模型预算仍能同时容纳“归类、总结、格式修复”三次请求，系统会先执行一次只暴露 `update_hypotheses` 的受限归类。该请求计入模型调用和 Token，但不增加调查 `step_count`；归类完成后立即总结，不再开放外部工具。即使兼容服务返回未声明的外部工具，执行层也会以 `final_classification_only` 拒绝。系统提示同时把异常行定义为 failure site，要求继续核对至少一个上游调用方和相关接口或业务契约；`KeyError`、缺字段和非法输入必须优先检查入口校验，不能把下游 `.get()` 当作完整根因修复。该项目前已通过离线回归，真实单案例验收结果将在干净提交上运行一次后补充。
+第五项优化新增独立的 `classify_final_evidence` 节点：如果最后一个调查步骤产生了尚未归类的成功 Observation，且总模型预算仍能同时容纳“归类、总结、格式修复”三次请求，系统会先执行一次只暴露 `update_hypotheses` 的受限归类。该请求计入模型调用和 Token，但不增加调查 `step_count`；归类完成后立即总结，不再开放外部工具。即使兼容服务返回未声明的外部工具，执行层也会以 `final_classification_only` 拒绝。系统提示同时把异常行定义为 failure site，要求继续核对至少一个上游调用方和相关接口或业务契约；`KeyError`、缺字段和非法输入必须优先检查入口校验，不能把下游 `.get()` 当作完整根因修复。
+
+该项在干净提交 `f43f30d` 上只运行了一次 `missing_user_id + full`，机器评分 1/1；根因、必需代码文件、文档、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规、重复调用和 fallback 均为 0。Agent 读取了缺字段调用、`api.py`、`service.py`、`repository.py` 与 `api.md` 契约，最终明确区分“Service 下标访问是 failure site”和“API 未按契约校验并阻断非法 payload 是系统根因”，3 个假设均 confirmed 并提前结束。模型调用 9 次、工具调用 13 次、Token 51,686、耗时 57.30 秒、Observation 利用率 77.78%，发生 1 次格式修复。`final_classification_count=0`：最后证据已在第 7 个调查步骤正常归类并触发早停，因此这次真实运行验证了上游根因追踪和新指标兼容性，但没有触发预算末尾的受限归类分支；该分支仍由离线回归确定性验证。原始报告为 `.incident_reports/eval-20260918-212806.json`，SHA-256 为 `f6a6ecc35a6e0880dbc31826f2c29f6081ac225b1265b2cfc1b8ba80d1eaa23b`。
 
 新增案例可离线复现：
 
@@ -1640,7 +1642,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 在干净提交上只运行一次 `missing_user_id + full`，验收最后证据归类与上游根因追踪；随后使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照；
+1. 使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照，按逐例来源审计记录真实总体效果；
 2. 保持 Agent 控制流稳定，按每批两个案例逐步扩展到 10–12 个可执行场景，并持续检查答案隔离；
 3. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，最后补充命令行产品演示；
 4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
