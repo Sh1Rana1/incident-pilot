@@ -27,6 +27,29 @@ class RegistryTests(unittest.TestCase):
         schemas = registry.schemas()
         self.assertTrue(all(item["function"]["strict"] for item in schemas))
 
+    def test_strict_schema_requires_nullable_read_file_fields(self) -> None:
+        strict_schema = next(
+            item["function"]["parameters"]
+            for item in registry.schemas(strict=True)
+            if item["function"]["name"] == "read_file"
+        )
+        properties = strict_schema["properties"]
+
+        self.assertEqual(set(strict_schema["required"]), set(properties))
+        self.assertNotIn("default", properties["start_line"])
+        self.assertIn({"type": "null"}, properties["start_line"]["anyOf"])
+        self.assertIn({"type": "null"}, properties["end_line"]["anyOf"])
+
+    def test_non_strict_schema_keeps_optional_read_file_fields(self) -> None:
+        schema = next(
+            item["function"]["parameters"]
+            for item in registry.schemas(strict=False)
+            if item["function"]["name"] == "read_file"
+        )
+
+        self.assertEqual(schema["required"], ["path"])
+        self.assertIsNone(schema["properties"]["start_line"]["default"])
+
     def test_unknown_tool_has_standard_result(self) -> None:
         result = call_tool("missing", {})
         self.assertFalse(result.ok)
@@ -69,6 +92,42 @@ class FileToolTests(unittest.TestCase):
         result = call_tool("read_file", {"path": "main.py"})
         self.assertTrue(result.ok)
         self.assertTrue(any("def main" in line["content"] for line in result.data["lines"]))
+
+    def test_read_file_returns_inclusive_targeted_lines(self) -> None:
+        result = call_tool("read_file", {
+            "path": "demo_app/run_case.py",
+            "start_line": 35,
+            "end_line": 45,
+        })
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["lines"][0]["line"], 35)
+        self.assertEqual(result.data["lines"][-1]["line"], 45)
+        self.assertEqual(result.meta["line_start"], 35)
+        self.assertEqual(result.meta["line_end"], 45)
+        self.assertTrue(result.meta["targeted"])
+
+    def test_read_file_rejects_reverse_or_oversized_range(self) -> None:
+        reverse = call_tool("read_file", {
+            "path": "main.py", "start_line": 20, "end_line": 10,
+        })
+        oversized = call_tool("read_file", {
+            "path": "main.py", "start_line": 1, "end_line": 31,
+        })
+
+        self.assertFalse(reverse.ok)
+        self.assertIn("不能小于", reverse.error or "")
+        self.assertFalse(oversized.ok)
+        self.assertIn("最多 30 行", oversized.error or "")
+
+    def test_read_file_start_only_defaults_to_thirty_line_window(self) -> None:
+        result = call_tool("read_file", {
+            "path": "README.md", "start_line": 100,
+        })
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data["lines"][0]["line"], 100)
+        self.assertLessEqual(len(result.data["lines"]), 30)
 
     def test_search_code_returns_structured_matches(self) -> None:
         result = call_tool("search_code", {"query": "run_agent"})

@@ -1,6 +1,6 @@
-# IncidentPilot V14.3 · 假设更新空转控制
+# IncidentPilot V14.3 · 调查效率优化（2/5）
 
-V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 当前只完成第一项可泛化优化：阻止没有新证据时反复更新假设，并修正整组 `next_action` 的校验粒度；尚未产生 V14 对照实验数据，不能声称通过率或成本已经提升。
+V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 当前完成两项可泛化优化：阻止没有新证据时反复更新假设；为 `read_file` 增加最多 30 行的定向读取。除已记录的单案例验收外，尚未运行完整 V14 对照实验，不能声称总体通过率或成本已经提升。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
@@ -635,6 +635,10 @@ main.py 格式化为人类可读文本
 
 先通过 `context_manager.py` 生成压缩请求，再把当前 Profile 的外部工具和输出格式发送给模型。`update_hypotheses` Schema 只在尚未建立初始假设，或已有新成功 Observation 等待归类时开放；成功保存假设后会暂时从 Schema 隐藏，直到外部调查产生新证据。普通压缩记忆包含完整假设、假设所引用的全部 Observation，以及最近 4 条尚未归类的 Observation；每条结果摘要最多 700 字符，但保留 ID、参数、成功状态和精确来源。若上一轮产生了新成功证据，请求中会追加醒目的控制门提示，模型必须先更新假设。模型先提出 2–4 个可证伪候选根因，再用最有区分度的工具验证；也可以在证据足够时直接生成最终 JSON。
 
+当 `search_code` 已返回命中行时，Prompt 要求模型优先把命中位置附近不超过 30 行作为 `read_file` 的 `start_line/end_line`，而不是重新读取整个长文件。行号从 1 开始且包含两端；只提供 `start_line` 时自动读取从该行开始的最多 30 行。反向范围、超过 30 行的窗口和超出文件总行数的起始行在执行层拒绝。
+
+OpenAI-compatible 严格工具 Schema 会递归把对象的全部属性加入 `required`、移除 `default` 并保留 nullable 类型。因此 DeepSeek 严格模式看到的是必填的 `path/start_line/end_line`，逻辑上的可选行号用 `null` 表示；本地 Pydantic 模型与非严格服务仍允许旧调用方省略行号。
+
 只要完整集合中仍存在 `unverified` 或 `supported` 假设，就至少要有一个开放假设提供结构化 `next_action`：`tool_name` 表示下一项工具，`purpose` 解释信息价值，`supports_if` 和 `rejects_if` 预先声明什么结果会支持或否定它。不再要求每一个开放候选都重复规划动作，避免某个已获得支持但暂时无需继续验证的候选使整批更新失败。
 
 #### `execute_tools`
@@ -790,7 +794,7 @@ JSON 参数会按键名排序，因此以下调用被视为相同：
 
 | 工具 | 参数 | 行为与限制 |
 |---|---|---|
-| `read_file` | `path` | 读取项目内 UTF-8 文件，返回带行号内容，最多 20,000 字符 |
+| `read_file` | `path, start_line, end_line` | 读取项目内 UTF-8 文件并保留原始行号；行号均为包含端点，定向窗口最多 30 行，两个行号为 `null` 时兼容整文件读取，结果最多 20,000 字符 |
 | `search_code` | `query` | 在允许的文本后缀中大小写不敏感搜索，最多 50 条匹配 |
 | `list_files` | `path`、`max_depth` | 列出目录和文件，深度 1–5，最多 200 项 |
 
@@ -1365,12 +1369,14 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 177 项测试，覆盖：
+当前共有 182 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
+- 严格 Tool Schema 的 `required == properties`、nullable 行号和非严格模式兼容；
 - 路径越界、敏感配置和内部目录隔离；
 - 文件、RAG 和 Git 工具；
+- `read_file` 包含端点的定向读取、原始行号、30 行上限、反向范围拒绝和旧整文件调用兼容；
 - Runtime/Harness 工具白名单、严格参数、固定 Runner、结构化超时、环境密钥隔离和无 Shell 执行；
 - Harness 清单重复 ID、未知 ID、路径越界、内部评测目标与模型自带命令字段的拒绝；
 - `unittest` 结果计数、失败用例提取、预期非零退出码和真实 Runtime Observation；
@@ -1603,7 +1609,7 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 按“一项优化、离线回归、单案例真实验收”的节奏实现不超过 30 行的定向 `read_file`，然后再处理关键证据压缩；
+1. 用 `missing_user_id + full` 单案例验证定向读取与 DeepSeek 严格 Schema，然后继续处理关键证据压缩；
 2. 继续实现语义重复检测、最后证据归类和抛错点后的上游契约追踪，每项都只重跑一个对应失败案例；
 3. 使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照，再逐批扩展到 10–12 个可执行场景；
 4. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，最后补充命令行产品演示；

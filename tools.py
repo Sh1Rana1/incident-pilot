@@ -11,6 +11,7 @@ from tool_profiles import direct_file_access_blocked
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MAX_FILE_CHARS = 20_000
+MAX_READ_LINES = 30
 MAX_SEARCH_MATCHES = 50
 MAX_LIST_ITEMS = 200
 IGNORED_DIRS = {
@@ -39,6 +40,16 @@ SEARCHABLE_SUFFIXES = {".py", ".md", ".txt", ".json", ".toml", ".yaml", ".yml"}
 
 class ReadFileArgs(StrictModel):
     path: str = Field(description="项目根目录下的相对文件路径")
+    start_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选的起始行（从 1 开始且包含）；读取整个文件时传 null",
+    )
+    end_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选的结束行（包含）；读取整个文件时传 null",
+    )
 
 
 class SearchCodeArgs(StrictModel):
@@ -85,7 +96,10 @@ def _direct_access_blocked(path: Path) -> bool:
 
 @registry.register(
     name="read_file",
-    description="读取项目内指定 UTF-8 文本文件，返回带行号的内容。",
+    description=(
+        "读取项目内指定 UTF-8 文本文件，返回原始行号。已知目标位置时传入 "
+        "start_line/end_line，定向窗口最多 30 行；未知位置时两者传 null。"
+    ),
     arguments_model=ReadFileArgs,
 )
 def read_file(arguments: ReadFileArgs) -> ToolResult:
@@ -107,14 +121,71 @@ def read_file(arguments: ReadFileArgs) -> ToolResult:
     except UnicodeDecodeError:
         return ToolResult.failure("无法读取二进制或非 UTF-8 文件", path=arguments.path)
 
-    truncated = len(content) > MAX_FILE_CHARS
-    if truncated:
-        content = content[:MAX_FILE_CHARS]
-    lines = [{"line": number, "content": line} for number, line in enumerate(content.splitlines(), 1)]
+    targeted = arguments.start_line is not None or arguments.end_line is not None
+    if not targeted:
+        truncated = len(content) > MAX_FILE_CHARS
+        if truncated:
+            content = content[:MAX_FILE_CHARS]
+        lines = [
+            {"line": number, "content": line}
+            for number, line in enumerate(content.splitlines(), 1)
+        ]
+        returned_characters = len(content)
+        actual_start = lines[0]["line"] if lines else None
+        actual_end = lines[-1]["line"] if lines else None
+    else:
+        start_line = arguments.start_line or 1
+        end_line = arguments.end_line or start_line + MAX_READ_LINES - 1
+        if end_line < start_line:
+            return ToolResult.failure(
+                "end_line 不能小于 start_line",
+                path=arguments.path,
+                start_line=start_line,
+                end_line=end_line,
+            )
+        if end_line - start_line + 1 > MAX_READ_LINES:
+            return ToolResult.failure(
+                f"定向读取单次最多 {MAX_READ_LINES} 行，请缩小范围",
+                path=arguments.path,
+                start_line=start_line,
+                end_line=end_line,
+                max_lines=MAX_READ_LINES,
+            )
+        source_lines = content.splitlines()
+        if start_line > len(source_lines):
+            return ToolResult.failure(
+                "start_line 超出文件总行数",
+                path=arguments.path,
+                start_line=start_line,
+                total_lines=len(source_lines),
+            )
+        actual_end = min(end_line, len(source_lines))
+        selected = source_lines[start_line - 1:actual_end]
+        lines = []
+        returned_characters = 0
+        truncated = False
+        for number, line in enumerate(selected, start_line):
+            separator_length = int(bool(lines))
+            remaining = MAX_FILE_CHARS - returned_characters - separator_length
+            if remaining <= 0:
+                truncated = True
+                break
+            if len(line) > remaining:
+                line = line[:remaining]
+                truncated = True
+            lines.append({"line": number, "content": line})
+            returned_characters += separator_length + len(line)
+            if truncated:
+                break
+        actual_start = start_line
+        actual_end = lines[-1]["line"] if lines else None
     return ToolResult.success(
         {"path": arguments.path, "lines": lines},
         truncated=truncated,
-        returned_characters=len(content),
+        returned_characters=returned_characters,
+        targeted=targeted,
+        line_start=actual_start,
+        line_end=actual_end,
     )
 
 

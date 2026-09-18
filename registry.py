@@ -1,8 +1,10 @@
 """统一工具注册器：注册、生成 Schema、校验参数和执行工具。"""
 
 import json
+from copy import deepcopy
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -11,6 +13,27 @@ from tool_profiles import activate_tool_profile, reset_tool_profile
 
 
 ToolFunction = Callable[[BaseModel], ToolResult]
+
+
+def _strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
+    """生成 OpenAI-compatible 严格工具 Schema，同时保留本地参数默认值。"""
+    normalized = deepcopy(schema)
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            node.pop("default", None)
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                node["required"] = list(properties)
+                node["additionalProperties"] = False
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(normalized)
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -39,19 +62,23 @@ class ToolRegistry:
         strict: bool = True,
         allowed_tools: frozenset[str] | set[str] | None = None,
     ) -> list[dict]:
-        return [
-            {
+        schemas: list[dict] = []
+        for tool in self._tools.values():
+            if allowed_tools is not None and tool.name not in allowed_tools:
+                continue
+            parameters = tool.arguments_model.model_json_schema()
+            if strict:
+                parameters = _strict_parameters(parameters)
+            schemas.append({
                 "type": "function",
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.arguments_model.model_json_schema(),
+                    "parameters": parameters,
                     "strict": strict,
                 },
-            }
-            for tool in self._tools.values()
-            if allowed_tools is None or tool.name in allowed_tools
-        ]
+            })
+        return schemas
 
     def execute(
         self,
