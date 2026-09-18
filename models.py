@@ -224,6 +224,10 @@ class RunMetrics(StrictModel):
     )
     hypothesis_count: int = Field(default=0)
     confirmed_hypothesis_count: int = Field(default=0)
+    final_classification_count: int = Field(
+        default=0,
+        description="硬调查预算结束后执行的受限假设归类次数，只能为 0 或 1",
+    )
     human_review_count: int = Field(default=0)
     protected_access_attempt_count: int = Field(default=0)
     input_token_count: int = Field(default=0)

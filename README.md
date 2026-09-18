@@ -1,6 +1,6 @@
-# IncidentPilot V14.3 · 调查效率优化（4/5）
+# IncidentPilot V14.3 · 调查效率优化（5/5）
 
-V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 当前完成四项可泛化优化：阻止没有新证据时反复更新假设；为 `read_file` 增加最多 30 行的定向读取；让定向窗口的末端关键代码在 Observation 和压缩上下文中保持可见；识别同一文件已被成功 Observation 完整覆盖的读取范围。除已记录的单案例验收外，尚未运行完整 V14 对照实验，不能声称总体通过率或成本已经提升。
+V14.1 已增加异步资料查询与订单支付重试两个离线故障案例，当前共六个可执行场景、九个 Evaluation 案例、十个 Harness Check。V14.2 已冻结五个 development 案例的 V13 基线。V14.3 的五项可泛化优化已完成离线实现：阻止没有新证据时反复更新假设；为 `read_file` 增加最多 30 行的定向读取；让定向窗口的末端关键代码在 Observation 和压缩上下文中保持可见；识别同一文件已被成功 Observation 完整覆盖的读取范围；在调查预算结束时为最后一批新证据预留一次受限假设归类，并要求继续追踪抛错点的上游调用方和业务契约。除已记录的单案例验收外，尚未运行完整 V14 对照实验，不能声称总体通过率或成本已经提升。
 
 验证基点为 V13 `8c804fb`：修改前 155 项离线测试及 `main.py doctor` 通过。新增案例各包含故障代码、复现入口、简化日志、业务契约、复现/回归 Harness 和 Evaluation 标准。回归测试会在临时副本应用参考修复，验证入口与契约检查均通过，正式故障代码保留原样。
 
@@ -23,6 +23,8 @@ V14.3 第一项优化完成后，只运行了一次预先指定的 `schema_misma
 第四项优化把重复读取判断从“工具名和 JSON 参数完全相同”扩展到成功 `read_file` Observation 的真实文件行区间。新定向窗口如果已由一个或多个成功窗口的并集完整覆盖，执行层返回 `duplicate_read_range` 和可复用的 Observation ID，不再访问文件；只要还包含至少一行未覆盖内容就继续执行。失败、越界、被预算拦截或已标为重复的 Observation 不会建立覆盖范围。
 
 该项在干净提交 `2cc5f0a` 上只运行了一次 `missing_user_id + full`，机器评分继续为 1/1；根因、代码文件、引用、Evidence 落地和 Claim 覆盖均为 100%，Provenance 违规、格式修复和 fallback 均为 0。报告仍完整说明“缺少 `user_id` 的案例输入 → API 原样透传 → Service 下标访问触发 `KeyError`”，但置信度为 medium、没有 confirmed 假设或早停，文档覆盖仍为 0%，三条成功 Observation 未用于报告。模型调用 9 次、工具调用 16 次、Token 42,336、耗时 42.28 秒、Observation 利用率 66.67%。本次唯一重复是精确相同的 `search_code("user_id")`，没有提出被旧范围完整覆盖的新 `read_file` 窗口，因此只能作为无回归验收，不能声称真实模型运行触发了新分支；区间去重行为由离线执行层回归确定性验证。模型还产生了三次超过 30 行的失败读取和一次 Profile 不允许的 `list_checks`，说明工具规划仍有优化空间。原始报告为 `.incident_reports/eval-20260918-201809.json`，SHA-256 为 `a3050fb4c5bf0e672990b1b15de61b6849822522ed5fecd2c4fb7f0980b477c0`。
+
+第五项优化新增独立的 `classify_final_evidence` 节点：如果最后一个调查步骤产生了尚未归类的成功 Observation，且总模型预算仍能同时容纳“归类、总结、格式修复”三次请求，系统会先执行一次只暴露 `update_hypotheses` 的受限归类。该请求计入模型调用和 Token，但不增加调查 `step_count`；归类完成后立即总结，不再开放外部工具。即使兼容服务返回未声明的外部工具，执行层也会以 `final_classification_only` 拒绝。系统提示同时把异常行定义为 failure site，要求继续核对至少一个上游调用方和相关接口或业务契约；`KeyError`、缺字段和非法输入必须优先检查入口校验，不能把下游 `.get()` 当作完整根因修复。该项目前已通过离线回归，真实单案例验收结果将在干净提交上运行一次后补充。
 
 新增案例可离线复现：
 
@@ -544,7 +546,9 @@ call_model
         │                                  │                              ├── continue → 继续
         │                                  │                              ├── summarize → 总结
         │                                  │                              └── cancel → 取消
-        │                                  ├── 硬预算耗尽 → 强制总结
+        │                                  ├── 硬预算将尽且有未归类新证据 → classify_final_evidence
+        │                                  │                                  └── 仅更新假设 → 立即总结
+        │                                  ├── 其他硬预算耗尽 → 强制总结
         │                                  └── 仍需调查 → call_model
         ├── run_demo_case / run_check → runtime_review
         │                   ├── approve → execute_tools → 固定 Runner → Runtime Observation
@@ -618,6 +622,7 @@ main.py 格式化为人类可读文本
 | `confirmed_at_tool_call_count` | 首次形成 confirmed 假设时的工具调用计数，用于测量确认后的浪费 |
 | `hypothesis_update_required` | 新成功 Observation 是否仍待写入假设；为真时外部工具暂时关闭 |
 | `hypothesis_update_failure_count` | 连续无效或越权假设更新次数；达到 2 次后停止工具调查并用现有证据总结 |
+| `final_classification_attempted` | 是否已经执行过硬调查预算结束后的唯一一次受限假设归类 |
 | `validation_errors` | 历次报告格式、假设准备度和 Provenance 验证错误，只追加不覆盖 |
 | `evidence_sufficient / early_stopped` | 是否满足确定性证据充分度并提前收尾 |
 | `human_review_*` | 是否启用 HITL、触发原因、次数和是否已经处理 |
@@ -658,6 +663,12 @@ OpenAI-compatible 严格工具 Schema 会递归把对象的全部属性加入 `r
 重复调用保护先规范化工具参数，拦截完全相同的调用；对定向 `read_file` 还会把同一规范化路径的成功来源范围合并。如果新请求的每一行都已被覆盖，则生成 `repeated=true` 的失败 Observation，并在 `meta.covered_by_observation_ids` 中返回应复用的旧证据。部分重叠但包含新行的窗口、失败读取后的修正窗口都会继续执行。第一次重复仍允许模型纠正，累计第二次重复才强制总结。
 
 工具硬预算在执行层再次检查。超过 `MAX_TOOL_CALLS` 的请求不会执行，并收到 `tool_budget_exhausted`，随后图进入总结，不能靠一次并行请求绕过预算。同一轮超过 `MAX_TOOLS_PER_STEP` 的调用收到 `per_step_tool_limit`，但不会立刻强制总结；模型下一轮可以根据已有结果重新排序，只选择信息价值最高的动作。
+
+#### `classify_final_evidence`
+
+调查达到步骤上限、证据充分或调查阶段的模型额度边界时，如果最后一批成功 Observation 仍未归类，系统最多进入一次受限归类。该节点复用证据保全上下文，只向模型暴露 `update_hypotheses`，不提供任何文件、RAG、Git 或 Runtime 工具；请求计入总模型调用与 Token，但不增加 `step_count`。成功或失败后都直接进入 `synthesize_report`，不会回到普通调查。
+
+只有总模型预算至少还能容纳“受限归类、最终总结、一次格式修复”时才进入该节点。执行层会拒绝兼容服务在这里返回的任何外部工具，并记录 `final_classification_only`，因此模型无法借归类轮次额外读取文件或运行检查。
 
 #### `runtime_review`
 
@@ -720,7 +731,7 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 
 #### `synthesize_report`
 
-证据充分、达到调查/模型/工具硬预算，或第二次发现完全重复调用后，不再向模型提供工具，只要求它使用现有 Observation 和假设生成报告。此时上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
+证据充分、达到调查/模型/工具硬预算，或第二次发现完全重复调用后，系统会在可用且必要时先完成最后证据归类，随后不再向模型提供工具，只要求它使用现有 Observation 和假设生成报告；预算不足以安全归类时则直接总结。此时上下文切换为证据保全模式：纳入全部具有真实来源的成功 Observation、全部假设引用和最近两条失败结果，避免关键但尚未绑定的旧证据被普通窗口淘汰。这次请求不计入调查 `step_count`，但计入总模型调用与 Token。
 
 #### `repair_report`
 
@@ -742,7 +753,7 @@ Checkpoint 的序列化关闭 pickle fallback，也不允许从 MsgPack 动态�
 max_steps = 8
 ```
 
-它控制允许使用工具的调查轮数。除此以外，系统还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时；模型硬预算会预留一次总结和一次格式修复机会。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。可选补丁提案最多增加一次无工具模型调用。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
+它控制允许使用工具的调查轮数。除此以外，系统还分别限制总模型调用、总工具调用、单轮工具调用、Runtime 调用次数和单次 Runtime 超时。没有假设时，模型硬预算预留总结和格式修复两次请求；已有假设时，预留受限归类、总结和格式修复三次请求。受限归类计入总模型调用与 Token，但不占调查 `step_count`，也不能调用外部工具。每次请求再通过确定性上下文选择器控制重复输入量。长期记忆的筛选和排序完全在本地完成，不额外请求模型。可选补丁提案最多增加一次无工具模型调用。最后由 LangGraph `recursion_limit` 限制节点跳转总数。这些计数对象不同，不能互相替代。
 
 LangGraph 框架保险为：
 
@@ -1173,6 +1184,7 @@ AgentRunResult
 | `successful_observation_count` | 成功执行且非重复的 Observation 数量 |
 | `synthesis_used` | 是否使用强制总结 |
 | `format_repair_used` | 是否进行过最后一次无工具格式修复 |
+| `final_classification_count` | 硬调查预算结束后是否执行过唯一一次受限假设归类，取值为 0 或 1 |
 | `early_stopped` | 是否在调查轮数、模型和工具硬预算之前，因 confirmed 假设证据充分而提前总结 |
 | `hypothesis_count / confirmed_hypothesis_count` | 最终假设总数和已确认数量 |
 | `human_review_count` | LangGraph HITL 人工决策次数 |
@@ -1381,7 +1393,7 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 189 项测试，覆盖：
+当前共有 194 项测试，覆盖：
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1416,6 +1428,9 @@ ExperimentRun
 - 新证据未更新假设时阻止后续外部工具，更新完成后恢复调查；
 - 没有新 Observation 时从模型 Schema 隐藏假设工具，并在执行层拒绝兼容服务返回的未声明重复更新；
 - 连续两次无效假设更新触发受限总结，避免把全部模型预算耗在内部状态格式修复上；
+- 最后一批成功 Observation 在硬调查预算结束后最多获得一次受限归类，且不增加调查步骤；
+- 受限归类只能调用内部假设工具，外部工具请求会被执行层拒绝；不足三次模型额度时直接总结，保留格式修复机会；
+- Prompt 明确区分 failure site 与系统根因，并要求检查上游调用方、入口校验和相关业务契约；
 - JSON 代码块及前后说明文字解析、详细验证错误持久化；
 - 最终格式修复失败时，从真实 Observation 构造有来源的降级报告；
 - 空 Evidence 报告的引用有效率记为 0%，不再显示误导性的 100%；
@@ -1600,6 +1615,7 @@ ModuleNotFoundError: No module named 'langgraph'
 - 发给模型的压缩记忆将普通 Observation 摘要限制为 700 字符，定向文件窗口限制为 4,000 字符；普通调查只保留所有已引用证据和最近 4 条未引用结果，最终报告阶段则恢复全部带来源的成功结果。其他长结果中的次要细节仍可能被省略，但本地 Checkpoint 中的完整消息不会被删除；
 - 上下文压缩的实际 Token 节省依赖模型服务是否返回 usage，必须通过同一 Case、同一模型的真实对照确认，离线测试不能证明具体节省比例；
 - 语义重复检测当前只覆盖定向 `read_file` 的真实行范围；其他工具仍按规范化参数精确去重，新的整文件请求也不会根据不完整窗口推测文件末尾；
+- 最后证据归类只有在总模型预算至少剩余三次请求时才执行；否则系统优先保证最终总结和一次格式修复，假设可能保持尚未归类状态；
 - `confidence` 是模型自我声明，不是校准后的概率；
 - 已有确定性假设 Gate，但“两个独立来源”是工程启发式，不等于自然语言语义蕴含证明；
 - 跨进程 HITL 只在单机 SQLite CLI 路径提供；直接 `run_agent()` 仍是内存模式，也不会授权绕过评测和敏感路径隔离；
@@ -1624,8 +1640,8 @@ ModuleNotFoundError: No module named 'langgraph'
 
 推荐顺序：
 
-1. 实现最后一批成功证据的受限假设归类，并加强抛错点后的上游调用方与业务契约追踪；
-2. 使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照，再逐批扩展到 10–12 个可执行场景；
+1. 在干净提交上只运行一次 `missing_user_id + full`，验收最后证据归类与上游根因追踪；随后使用相同五个 development 案例、Profile、预算和模型运行正式 V13/V14 对照；
+2. 保持 Agent 控制流稳定，按每批两个案例逐步扩展到 10–12 个可执行场景，并持续检查答案隔离；
 3. 确定性评测稳定后加入默认关闭、每份报告只调用一次的 LLM Judge，最后补充命令行产品演示；
 4. 若要进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 

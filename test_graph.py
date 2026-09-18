@@ -16,6 +16,7 @@ from graph import (
     build_report_output_contract,
     route_after_model,
     route_after_tools,
+    route_after_final_classification,
     route_after_validation,
     response_usage,
     parse_incident_report,
@@ -124,6 +125,7 @@ def initial_state(max_steps=8):
         "cancelled": False,
         "hypothesis_update_required": False,
         "hypothesis_update_failure_count": 0,
+        "final_classification_attempted": False,
         "runtime_tools_enabled": False,
         "runtime_execution_preapproved": False,
         "runtime_execution_decision": None,
@@ -211,6 +213,58 @@ class RoutingTests(unittest.TestCase):
         state = initial_state(max_steps=1)
         state["step_count"] = 1
         self.assertEqual(route_after_tools(state), "synthesize_report")
+
+    def test_final_classification_routing_requires_pending_evidence_and_budget(self):
+        state = initial_state(max_steps=2)
+        state["step_count"] = 2
+        state["model_call_count"] = 7
+        state["hypothesis_update_required"] = True
+        state["hypotheses"] = [{
+            "hypothesis_id": "H1",
+            "statement": "入口可能缺少校验",
+            "status": "unverified",
+            "confidence": 0.4,
+            "supporting_observation_ids": [],
+            "contradicting_observation_ids": [],
+            "next_action": {
+                "tool_name": "read_file",
+                "purpose": "检查入口",
+                "supports_if": "入口没有校验",
+                "rejects_if": "入口已有校验",
+            },
+        }]
+
+        self.assertEqual(route_after_tools(state), "classify_final_evidence")
+
+        state["model_call_count"] = 8
+        self.assertEqual(route_after_tools(state), "synthesize_report")
+        state["final_classification_attempted"] = True
+        self.assertEqual(route_after_tools(state), "synthesize_report")
+
+        state["final_classification_attempted"] = False
+        state["hypothesis_update_required"] = False
+        state["step_count"] = 1
+        state["model_call_count"] = 7
+        self.assertEqual(route_after_tools(state), "synthesize_report")
+
+    def test_final_classification_model_routes_once(self):
+        state = initial_state()
+        state["messages"].append({"role": "assistant", "content": "no tool"})
+        self.assertEqual(
+            route_after_final_classification(state), "synthesize_report"
+        )
+        state["messages"][-1] = {
+            "role": "assistant",
+            "tool_calls": [{"id": "call-h"}],
+        }
+        self.assertEqual(
+            route_after_final_classification(state), "execute_tools"
+        )
+
+    def test_prompt_separates_failure_site_from_upstream_root_cause(self):
+        self.assertIn("failure site", SYSTEM_PROMPT)
+        self.assertIn("至少继续检查一个上游调用方", SYSTEM_PROMPT)
+        self.assertIn("API/入口层是否校验必填字段", SYSTEM_PROMPT)
 
     def test_signature_normalizes_json_key_order(self):
         first = tool_call_signature("search_code", '{"query":"x","path":"."}')
@@ -814,6 +868,151 @@ class GraphFlowTests(unittest.TestCase):
         self.assertEqual(result["repeated_tool_call_count"], 2)
         self.assertTrue(result["synthesis_attempted"])
         self.assertNotIn("tools", client.fake_completions.requests[-1])
+
+    def test_last_successful_observation_gets_one_restricted_classification(self):
+        initial_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口可能缺少校验",
+                "status": "unverified",
+                "confidence": 0.4,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "读取入口",
+                    "supports_if": "入口没有校验",
+                    "rejects_if": "入口已有校验",
+                },
+            }],
+        })
+        final_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口读取结果支持缺少校验",
+                "status": "supported",
+                "confidence": 0.75,
+                "supporting_observation_ids": ["obs-001"],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "后续核对调用契约",
+                    "supports_if": "契约要求入口校验",
+                    "rejects_if": "契约允许直接透传",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": initial_update,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":10}'
+                    ),
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-h2", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": final_update,
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=2)
+        )
+
+        self.assertTrue(result["final_classification_attempted"])
+        self.assertEqual(result["step_count"], 2)
+        self.assertEqual(result["model_call_count"], 4)
+        self.assertEqual(result["hypotheses"][0]["status"], "supported")
+        self.assertEqual(
+            result["hypotheses"][0]["supporting_observation_ids"],
+            ["obs-001"],
+        )
+        self.assertFalse(result["hypothesis_update_required"])
+        classification_request = client.fake_completions.requests[2]
+        self.assertEqual(
+            [
+                item["function"]["name"]
+                for item in classification_request["tools"]
+            ],
+            ["update_hypotheses"],
+        )
+        self.assertNotIn("tools", client.fake_completions.requests[-1])
+
+    def test_final_classification_rejects_external_tool_then_summarizes(self):
+        initial_update = json.dumps({
+            "hypotheses": [{
+                "hypothesis_id": "H1",
+                "statement": "入口可能缺少校验",
+                "status": "unverified",
+                "confidence": 0.4,
+                "supporting_observation_ids": [],
+                "contradicting_observation_ids": [],
+                "next_action": {
+                    "tool_name": "read_file",
+                    "purpose": "读取入口",
+                    "supports_if": "入口没有校验",
+                    "rejects_if": "入口已有校验",
+                },
+            }],
+        })
+        client = FakeClient([
+            FakeMessage(tool_calls=[{
+                "id": "call-h1", "type": "function",
+                "function": {
+                    "name": "update_hypotheses", "arguments": initial_update,
+                },
+            }]),
+            FakeMessage(tool_calls=[{
+                "id": "call-read", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"main.py","start_line":1,"end_line":10}'
+                    ),
+                },
+            }]),
+            # 模拟兼容服务无视受限 Schema，仍请求外部工具。
+            FakeMessage(tool_calls=[{
+                "id": "call-forbidden", "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": (
+                        '{"path":"config.py","start_line":1,"end_line":10}'
+                    ),
+                },
+            }]),
+            FakeMessage(content=VALID_REPORT),
+        ])
+
+        result = build_agent_graph(client, test_config()).invoke(
+            initial_state(max_steps=2)
+        )
+
+        self.assertTrue(result["final_classification_attempted"])
+        self.assertEqual(result["step_count"], 2)
+        self.assertEqual(len(result["observations"]), 2)
+        self.assertFalse(result["observations"][1]["ok"])
+        self.assertIn(
+            "最终证据归类轮次只允许调用 update_hypotheses",
+            result["observations"][1]["error"],
+        )
+        self.assertFalse(any(
+            "config.py" in signature
+            for signature in result["tool_call_signatures"]
+        ))
+        self.assertTrue(result["synthesis_attempted"])
 
     def test_covered_read_range_is_rejected_as_semantic_duplicate(self):
         client = FakeClient([

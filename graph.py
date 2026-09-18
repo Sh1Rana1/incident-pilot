@@ -65,6 +65,8 @@ SYSTEM_PROMPT = """你是 IncidentPilot，一个假设驱动、证据驱动的�
 不要预猜尚未返回的 Observation ID；必须等工具结果出现后，再在后续响应中引用。
 每轮最多选择三个工具；traceback 已给文件时优先直接读取，已知符号时优先搜索，供应商契约问题优先文档；没有回归线索不要调用 Git。
 search_code 已给出命中行时，优先用 read_file 的 start_line/end_line 读取命中附近不超过 30 行，不要反复读取整个文件。调用 read_file 前检查压缩记忆中的成功读取范围：新窗口已被覆盖时直接复用原 Observation；只有确实补充新行时才允许部分重叠。
+异常实际抛出的代码行只是 failure site，不一定是系统根因。定位抛错点后，至少继续检查一个上游调用方，并核对相关接口或业务契约。
+遇到 KeyError、缺字段或非法输入时，优先检查 API/入口层是否校验必填字段以及文档约定；不要只建议把下游的 payload[...] 改成 .get()。
 当用户明确要求复现故障或需要运行时证据时，先用静态证据缩小范围。优先调用 list_checks 查看项目所有者预登记的测试，再调用 run_check(check_id)；兼容工具 run_demo_case 仍可复现四个固定案例。这些工具都不能接受 Shell 命令。
 run_check/run_demo_case 返回的 exception_message、failed_tests 和 traceback_frames 是真实运行结果：优先读取其中的项目业务文件，并用精确错误码、配置键检索文档；RuntimeError 是 Python 异常类型，不代表其中的 HTTP 错误文本是伪造的。
 当某个假设已由至少两项独立来源确认时，应停止扩散调查并输出最终报告。
@@ -118,6 +120,7 @@ class AgentState(TypedDict):
     confirmed_at_tool_call_count: Optional[int]
     hypothesis_update_required: bool
     hypothesis_update_failure_count: int
+    final_classification_attempted: bool
     runtime_tools_enabled: bool
     runtime_execution_preapproved: bool
     runtime_execution_decision: Optional[str]
@@ -258,17 +261,41 @@ def route_after_tools(state: AgentState) -> str:
     """工具执行后决定继续调查，还是用已有证据强制收尾。"""
     if state.get("cancelled"):
         return "build_cancelled"
-    if state.get("force_synthesis") or state["step_count"] >= state["max_steps"]:
+    if state.get("final_classification_attempted"):
+        return "synthesize_report"
+    investigation_limit = max(
+        1,
+        state.get("max_model_calls", 10) - (3 if state.get("hypotheses") else 2),
+    )
+    investigation_must_stop = (
+        state.get("force_synthesis")
+        or state["step_count"] >= state["max_steps"]
+        or state.get("evidence_sufficient")
+        or state.get("model_call_count", 0) >= investigation_limit
+    )
+    can_classify_final_evidence = (
+        investigation_must_stop
+        and state.get("hypothesis_update_required", False)
+        and bool(state.get("hypotheses"))
+        and state.get("model_call_count", 0)
+        <= state.get("max_model_calls", 10) - 3
+    )
+    if can_classify_final_evidence:
+        return "classify_final_evidence"
+    if investigation_must_stop:
         return "synthesize_report"
     if state.get("pending_review_reason"):
         return "human_review"
-    if state.get("evidence_sufficient"):
-        return "synthesize_report"
-    if state.get("model_call_count", 0) >= max(
-        1, state.get("max_model_calls", 10) - 2
-    ):
-        return "synthesize_report"
     return "call_model"
+
+
+def route_after_final_classification(state: AgentState) -> str:
+    """受限归类只执行一次；没有工具调用也直接进入总结。"""
+    return (
+        "execute_tools"
+        if state["messages"][-1].get("tool_calls")
+        else "synthesize_report"
+    )
 
 
 def route_after_human_review(state: AgentState) -> str:
@@ -518,6 +545,38 @@ def build_agent_graph(
             **_model_usage_update(state, response),
         }
 
+    def classify_final_evidence(state: AgentState) -> dict:
+        """在硬调查预算结束后，用一次仅限内部工具的调用归类最后证据。"""
+        print("最后一批成功证据尚未归类，正在执行受限假设归类。")
+        messages, compacted = request_messages(state)
+        messages = messages + [{
+            "role": "system",
+            "content": (
+                "这是调查结束前唯一一次受限归类。本轮只能调用 "
+                "update_hypotheses，把最后一批成功 Observation 归入完整假设集合；"
+                "不能调用任何外部工具，归类后系统会立即生成最终报告。"
+            ),
+        }]
+        request = {
+            "model": config.model,
+            "messages": messages,
+            "tools": [hypothesis_tool_schema()],
+            "tool_choice": "auto",
+        }
+        output_format = response_format(config)
+        if output_format is not None:
+            request["response_format"] = output_format
+        response = client.chat.completions.create(**request)
+        return {
+            "messages": [assistant_message_to_dict(response.choices[0].message)],
+            "final_classification_attempted": True,
+            "validation_error": None,
+            "context_compaction_count": (
+                state.get("context_compaction_count", 0) + int(compacted)
+            ),
+            **_model_usage_update(state, response),
+        }
+
     def runtime_review(state: AgentState) -> dict:
         """在任何运行时工具实际执行前，用 Checkpoint 暂停并取得单次授权。"""
         requested_items: list[str] = []
@@ -593,6 +652,9 @@ def build_agent_graph(
             "hypothesis_update_failure_count", 0
         )
         new_successful_observation = False
+        final_classification_only = state.get(
+            "final_classification_attempted", False
+        )
         protected_access_attempted = False
         runtime_call_count = state.get("runtime_call_count", 0)
         successful_runtime_call_count = state.get("successful_runtime_call_count", 0)
@@ -609,23 +671,39 @@ def build_agent_graph(
             update_missing = (
                 name != HYPOTHESIS_TOOL_NAME and hypothesis_update_required
             )
-            if total_budget_exhausted or per_step_exhausted or update_missing:
+            classification_violation = (
+                final_classification_only and name != HYPOTHESIS_TOOL_NAME
+            )
+            if (
+                total_budget_exhausted
+                or per_step_exhausted
+                or update_missing
+                or classification_violation
+            ):
                 reason = (
                     "tool_budget_exhausted"
                     if total_budget_exhausted
                     else (
-                        "per_step_tool_limit"
-                        if per_step_exhausted
-                        else "hypothesis_update_required"
+                        "final_classification_only"
+                        if classification_violation
+                        else (
+                            "per_step_tool_limit"
+                            if per_step_exhausted
+                            else "hypothesis_update_required"
+                        )
                     )
                 )
                 error = (
                     "工具调用预算已经用完，请根据已有证据生成报告。"
                     if total_budget_exhausted
                     else (
-                        f"单轮最多执行 {per_step_limit} 个工具，请按信息增益排序后在下一轮继续。"
-                        if per_step_exhausted
-                        else "上一轮的新证据尚未写入假设；请先单独调用 update_hypotheses，再继续调查。"
+                        "最终证据归类轮次只允许调用 update_hypotheses；外部工具不会执行。"
+                        if classification_violation
+                        else (
+                            f"单轮最多执行 {per_step_limit} 个工具，请按信息增益排序后在下一轮继续。"
+                            if per_step_exhausted
+                            else "上一轮的新证据尚未写入假设；请先单独调用 update_hypotheses，再继续调查。"
+                        )
                     )
                 )
                 result = json.dumps({
@@ -1279,6 +1357,7 @@ def build_agent_graph(
 
     builder = StateGraph(AgentState)
     builder.add_node("call_model", call_model)
+    builder.add_node("classify_final_evidence", classify_final_evidence)
     builder.add_node("runtime_review", runtime_review)
     builder.add_node("execute_tools", execute_tools)
     builder.add_node("synthesize_report", synthesize_report)
@@ -1303,10 +1382,19 @@ def build_agent_graph(
     })
     builder.add_conditional_edges("execute_tools", route_after_tools, {
         "call_model": "call_model",
+        "classify_final_evidence": "classify_final_evidence",
         "synthesize_report": "synthesize_report",
         "human_review": "human_review",
         "build_cancelled": "build_cancelled",
     })
+    builder.add_conditional_edges(
+        "classify_final_evidence",
+        route_after_final_classification,
+        {
+            "execute_tools": "execute_tools",
+            "synthesize_report": "synthesize_report",
+        },
+    )
     builder.add_conditional_edges("human_review", route_after_human_review, {
         "call_model": "call_model",
         "synthesize_report": "synthesize_report",

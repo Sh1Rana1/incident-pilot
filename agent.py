@@ -117,6 +117,7 @@ def run_agent_detailed(
         "confirmed_at_tool_call_count": None,
         "hypothesis_update_required": False,
         "hypothesis_update_failure_count": 0,
+        "final_classification_attempted": False,
         "runtime_tools_enabled": runtime_tools_enabled,
         "runtime_execution_preapproved": allow_runtime_execution,
         "runtime_execution_decision": None,
@@ -228,6 +229,9 @@ def run_agent_detailed(
         hypothesis_count=len(hypotheses),
         confirmed_hypothesis_count=sum(
             item.status == "confirmed" for item in hypotheses
+        ),
+        final_classification_count=int(
+            final_state.get("final_classification_attempted", False)
         ),
         human_review_count=final_state.get("human_review_count", 0),
         protected_access_attempt_count=sum(

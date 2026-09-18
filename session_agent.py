@@ -200,6 +200,9 @@ def _result_from_state(
             confirmed_hypothesis_count=sum(
                 item.status == "confirmed" for item in hypotheses
             ),
+            final_classification_count=int(
+                state.get("final_classification_attempted", False)
+            ),
             human_review_count=state.get("human_review_count", 0),
             protected_access_attempt_count=sum(
                 bool(item.error and "属于评测或内部缓存目录" in item.error)

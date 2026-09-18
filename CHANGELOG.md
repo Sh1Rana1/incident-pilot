@@ -64,6 +64,17 @@
 - 本次唯一重复是精确相同的 `search_code("user_id")`，没有请求被旧窗口完整覆盖的 `read_file`，所以真实运行只证明无回归，不证明新语义分支被触发。`duplicate_read_range` 的确定性验收来自四项离线执行层回归，不能混淆两种结论。
 - 原始报告 `.incident_reports/eval-20260918-201809.json` 的 SHA-256 为 `a3050fb4c5bf0e672990b1b15de61b6849822522ed5fecd2c4fb7f0980b477c0`，元数据记录 `repository_commit=2cc5f0a...`、`working_tree_dirty=false`。
 
+### 第五项优化：最后证据归类与上游根因追踪
+
+- 新增独立的 `classify_final_evidence` 节点。调查步骤、证据充分度或调查阶段模型额度触发停止时，只要最后一批成功 Observation 尚未归类且硬预算仍有三次请求，系统会先执行一次只暴露 `update_hypotheses` 的受限归类。
+- 受限归类计入总模型调用和 Token，但不增加调查 `step_count`；无论归类成功或失败，下一节点都立即总结，不再返回普通调查。`final_classification_attempted` 保证整次运行最多进入一次。
+- 执行层新增 `final_classification_only` 保护。即使兼容服务返回未在 Schema 声明的文件、RAG、Git 或 Runtime 工具，也只生成失败 Observation，不实际执行。
+- 调整模型预算预留：没有假设时继续为总结与格式修复预留两次请求；已有假设时为最后归类、总结与格式修复预留三次请求。剩余预算不足时跳过归类，优先保证可验证的最终报告，不提高 `MAX_MODEL_CALLS`。
+- 系统提示明确区分异常抛出行这一 failure site 与系统根因；定位异常行后必须继续检查至少一个上游调用方及相关接口或业务契约。遇到 `KeyError`、缺字段或非法输入时优先核对 API/入口校验，不能只把下游下标访问改成 `.get()`。
+- `RunMetrics` 新增兼容默认值为 0 的 `final_classification_count`，记录受限归类是否实际发生；旧结果文件仍可读取。
+- 新增五项 Graph 回归测试，覆盖待归类证据与三次预算门、单次归类路由、failure site 提示、最后成功 Observation 的归类，以及兼容服务越权外部工具的执行层拒绝。完整离线测试增至 194 项并全部通过。
+- 没有修改 Evaluation 标准、Benchmark 数据、工具 Profile、文件隔离、Evidence/Claim 来源验证、默认模型/工具预算或 Runtime 安全边界。真实 `missing_user_id + full` 验收将在干净提交上只运行一次后记录。
+
 ---
 
 ## V14.1：Benchmark 首批两个案例（2026-09-18）
