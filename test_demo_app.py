@@ -30,6 +30,18 @@ NEW_CASES = {
         "gateway.charge(order_id, amount)",
         "gateway.charge(order_id, amount, idempotency_key=order_id)",
     ),
+    "timezone_mismatch": (
+        "RuntimeError: timezone mismatch: expected 45 minutes within SLA",
+        "timezone_elapsed_contract", "demo_app/app/time_window.py",
+        "return datetime.fromisoformat(normalized).replace(tzinfo=None)",
+        "return datetime.fromisoformat(normalized)",
+    ),
+    "cache_key_version": (
+        "KeyError: 'cache miss: profile:user-001'",
+        "cache_key_version_contract", "demo_app/app/cache_store.py",
+        'key = f"profile:{user_id}"',
+        'key = f"profile:v2:{user_id}"',
+    ),
 }
 
 
@@ -96,15 +108,21 @@ class ExpandedBenchmarkTests(unittest.TestCase):
         protected = [
             "demo_app/checks/async_contract_check.py",
             "demo_app/checks/payment_contract_check.py",
+            "demo_app/checks/timezone_contract_check.py",
+            "demo_app/checks/cache_contract_check.py",
             "demo_app/fixtures/payment_gateway.py",
             "demo_app/evals/async_missing_await.json",
             "demo_app/evals/retry_non_idempotent.json",
+            "demo_app/evals/timezone_mismatch.json",
+            "demo_app/evals/cache_key_version.json",
             "test_demo_app.py",
         ]
         for relative in protected:
             self.assertFalse(read_file(ReadFileArgs(path=relative)).ok, relative)
         for query in ("root_cause_keywords", "test_profile_name_is_resolved",
-                      "self.receipts", "NEW_CASES"):
+                      "test_equivalent_offsets_use_elapsed_time",
+                      "test_seeded_profile_can_be_loaded", "self.receipts",
+                      "NEW_CASES"):
             result = search_code(SearchCodeArgs(query=query))
             self.assertTrue(result.ok)
             self.assertFalse(set(protected) & {m["path"] for m in result.data["matches"]})

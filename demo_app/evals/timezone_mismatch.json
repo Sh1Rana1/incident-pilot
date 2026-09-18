@@ -1,0 +1,8 @@
+{
+  "case_id": "timezone_mismatch",
+  "question": "跨时区任务明明只运行了 45 分钟，却出现 RuntimeError: timezone mismatch: expected 45 minutes within SLA。请调查 demo_app 的时间解析、SLA 计算和业务时间契约。",
+  "expected_exception": "RuntimeError",
+  "root_cause_keywords": ["时区", "offset", "tzinfo"],
+  "evidence_files": ["demo_app/app/time_window.py"],
+  "relevant_docs": ["demo_app/docs/time-contract.md"]
+}

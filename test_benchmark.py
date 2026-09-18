@@ -1,4 +1,4 @@
-"""V14.1 Benchmark 划分、答案隔离和基线保存测试；不调用模型。"""
+"""V14 Benchmark 划分、答案隔离和基线保存测试；不调用模型。"""
 
 import json
 import tempfile
@@ -27,7 +27,7 @@ class BenchmarkManifestTests(unittest.TestCase):
         manifest, digest = load_benchmark_manifest(MANIFEST_PATH)
         validate_manifest_coverage(manifest, CASES_DIR)
         self.assertEqual(len(digest), 64)
-        self.assertEqual(len(manifest.case_ids("all")), 9)
+        self.assertEqual(len(manifest.case_ids("all")), 11)
 
     def test_development_set_is_frozen(self):
         manifest, _ = load_benchmark_manifest(MANIFEST_PATH)
@@ -38,7 +38,11 @@ class BenchmarkManifestTests(unittest.TestCase):
             "async_missing_await",
             "retry_non_idempotent",
         ])
-        self.assertEqual(manifest.hidden_cases, ["documentation_required"])
+        self.assertEqual(manifest.hidden_cases, [
+            "documentation_required",
+            "timezone_mismatch",
+            "cache_key_version",
+        ])
         self.assertEqual(manifest.challenge_cases, [
             "git_regression", "misleading_documentation",
         ])
@@ -55,7 +59,7 @@ class BenchmarkManifestTests(unittest.TestCase):
 
     def test_case_loader_ignores_internal_manifest(self):
         cases = load_cases(CASES_DIR)
-        self.assertEqual(len(cases), 9)
+        self.assertEqual(len(cases), 11)
         self.assertNotIn("_benchmark_manifest", {case.case_id for case in cases})
         digest = evaluation_digest(CASES_DIR, {case.case_id for case in cases})
         self.assertEqual(len(digest), 64)

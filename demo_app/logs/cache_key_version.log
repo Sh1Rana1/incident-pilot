@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/app/cache_store.py", in load_profile_cache
+    raise KeyError(f"cache miss: {key}") from exc
+KeyError: 'cache miss: profile:user-001'

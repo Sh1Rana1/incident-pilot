@@ -13,6 +13,18 @@
 
 ---
 
+## V14.4：Benchmark 第二批两个案例（2026-09-18）
+
+- 保持 `graph.py`、Prompt、模型与工具预算、报告校验器和五个 development 案例不变，新增 `timezone_mismatch` 与 `cache_key_version` 两个 hidden 案例；Benchmark 版本升为 `v14.4`，当前共八个可执行场景、十一个 Evaluation 案例。
+- 每个案例都包含独立故障代码、模块/脚本复现入口、简化错误日志、正常业务契约、预登记 reproduction/regression Harness Check 和 Evaluation 标准。没有增加外部网络、任意命令或正式工作区写入能力。
+- `timezone_mismatch` 用同一实际时间线上的 `Z` 与 `+08:00` 时间戳复现 SLA 误判，契约要求保留 offset 并按 elapsed time 比较；`cache_key_version` 用 v2 写入和旧格式读取复现写后读未命中，契约要求读写双方使用同一版本 Key。
+- Harness 增加 `demo_timezone_mismatch`、`timezone_elapsed_contract`、`demo_cache_key_version`、`cache_key_version_contract`，总数由 10 增至 14；`demo_case` 允许集合扩展到八个固定目标，兼容 `run_demo_case` 仍只保留 V13 四案例。
+- 扩展现有离线回归矩阵：两种启动方式必须稳定复现，故障版本的契约检查必须失败，临时副本应用最小参考修复后复现与契约检查必须共同通过；新增 Check/Eval 文件继续被 `read_file/search_code/list_files` 隔离，业务代码仍可调查。
+- 三个相关测试模块共 30 项专项测试通过，完整离线测试保持 196 项并全部通过；`main.py doctor` 通过并确认 Harness 清单含 14 项。测试数量没有增加，因为本批直接扩展既有参数化回归矩阵。
+- 冻结的 V13 和 V14.3 五案例正式结果均未修改；本阶段不调用真实模型，不生成新的通过率或成本结论。
+
+---
+
 ## V14.3：假设更新空转控制（2026-09-18）
 
 ### 修复

@@ -1,0 +1,4 @@
+Simplified reproduction log (offline demo)
+File "demo_app/run_case.py", in run_case
+    raise RuntimeError("timezone mismatch: expected 45 minutes within SLA")
+RuntimeError: timezone mismatch: expected 45 minutes within SLA

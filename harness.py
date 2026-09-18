@@ -32,6 +32,8 @@ MAX_FAILED_TESTS = 20
 DEMO_CASES = {
     "async_missing_await",
     "retry_non_idempotent",
+    "timezone_mismatch",
+    "cache_key_version",
     "missing_user_id",
     "schema_mismatch",
     "connection_leak",

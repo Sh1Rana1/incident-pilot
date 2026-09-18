@@ -1,4 +1,4 @@
-"""运行六个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
+"""运行八个预登记确定性故障案例，支持模块和脚本两种启动方式。"""
 
 import argparse
 import asyncio
@@ -18,6 +18,8 @@ from demo_app.app.worker import process_job
 from demo_app.app.webhook import deliver_webhook
 from demo_app.app.async_jobs import profile_name
 from demo_app.app.retry_policy import charge_order
+from demo_app.app.time_window import completed_within_sla
+from demo_app.app.cache_store import load_profile_cache, seed_profile_cache
 from demo_app.fixtures.payment_gateway import PaymentGateway
 
 
@@ -28,6 +30,8 @@ CASES = (
     "documentation_required",
     "async_missing_await",
     "retry_non_idempotent",
+    "timezone_mismatch",
+    "cache_key_version",
 )
 
 
@@ -56,6 +60,17 @@ def run_case(case_id: str) -> None:
         charge_order(gateway, "order-001", 100)
         if len(gateway.charges) != 1:
             raise RuntimeError("duplicate charge: expected 1, got 2")
+    elif case_id == "timezone_mismatch":
+        within_sla = completed_within_sla(
+            "2026-09-18T00:00:00Z",
+            "2026-09-18T08:45:00+08:00",
+            max_minutes=60,
+        )
+        if not within_sla:
+            raise RuntimeError("timezone mismatch: expected 45 minutes within SLA")
+    elif case_id == "cache_key_version":
+        cache = seed_profile_cache("user-001")
+        load_profile_cache(cache, "user-001")
     else:
         raise ValueError(f"未知案例: {case_id}")
 

@@ -1,0 +1,8 @@
+{
+  "case_id": "cache_key_version",
+  "question": "刚写入的用户资料立即读取却出现 KeyError: 'cache miss: profile:user-001'。请调查 demo_app 的缓存读写路径、Key 版本契约和根因。",
+  "expected_exception": "KeyError",
+  "root_cause_keywords": ["缓存", "Key", "v2"],
+  "evidence_files": ["demo_app/app/cache_store.py"],
+  "relevant_docs": ["demo_app/docs/cache-contract.md"]
+}

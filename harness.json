@@ -42,6 +42,46 @@
       "covers_files": ["demo_app/app/retry_policy.py"]
     },
     {
+      "check_id": "demo_timezone_mismatch",
+      "runner": "demo_case",
+      "target": "timezone_mismatch",
+      "description": "复现跨时区 SLA 误判",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/time_window.py"]
+    },
+    {
+      "check_id": "timezone_elapsed_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.timezone_contract_check",
+      "description": "验证带 offset 时间戳按实际经过时间计算 SLA",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/time_window.py"]
+    },
+    {
+      "check_id": "demo_cache_key_version",
+      "runner": "demo_case",
+      "target": "cache_key_version",
+      "description": "复现缓存 Key 版本不一致导致的写后读未命中",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [1],
+      "purpose": "reproduction",
+      "covers_files": ["demo_app/app/cache_store.py"]
+    },
+    {
+      "check_id": "cache_key_version_contract",
+      "runner": "unittest",
+      "target": "demo_app.checks.cache_contract_check",
+      "description": "验证 v2 缓存写入可由同版本读取且用户 Key 相互独立",
+      "timeout_seconds": 5,
+      "expected_exit_codes": [0],
+      "purpose": "regression",
+      "covers_files": ["demo_app/app/cache_store.py"]
+    },
+    {
       "check_id": "demo_missing_user_id",
       "runner": "demo_case",
       "target": "missing_user_id",
