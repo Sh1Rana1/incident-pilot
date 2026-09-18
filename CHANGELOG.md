@@ -47,7 +47,10 @@
 - 上下文压缩对定向文件窗口保留最多 4,000 字符，避免 Observation 已保留的末端证据又被统一 700 字符上限截掉。普通工具继续使用 Observation 1,000 字符、模型上下文 700 字符的既有边界。
 - 完整工具结果的 SHA-256、精确文件来源、Evidence 白名单和 Checkpoint 消息不变；没有放宽引用验证、评分标准、调查预算或文件访问隔离。
 - 新增三项回归测试，覆盖定向窗口末行在 Observation 中可见、经过上下文压缩后仍可见，以及普通 Observation 继续限制为 700 字符；完整离线测试增至 185 项。
-- 本项尚未运行付费真实验收；离线验证通过后只运行一个对应案例，不批量消耗模型费用。
+- 在干净提交 `5a88208` 上只运行一次 `missing_user_id + full`：定向 `run_case.py:20–49` 摘要保留末端及第 35–36 行关键调用，模型随后读取 `api.py`、`service.py`、`repository.py`，最终完整说明非法 payload 经无校验 API 进入 Service 并由 `payload["user_id"]` 触发 `KeyError`。
+- 机器评分 1/1，根因/代码/引用/Evidence/Claim 均为 100%，Provenance 违规、格式修复和 fallback 均为 0，两个 confirmed 假设触发早停；与 V13 基线相比模型调用 10→8、工具调用 13→13、Token 61,085→44,612、耗时 60.58→47.67 秒，Observation 利用率 83%→75%。
+- 文档覆盖仍为 0%，两条成功 Observation 未被最终报告引用；相较第二项的单次验收，诊断更完整但模型、工具与 Token 使用回升。因此该样本只验收证据保留与完整根因链路，不构成总体成本提升结论。
+- 原始报告 `.incident_reports/eval-20260918-195735.json` 的 SHA-256 为 `f1567eaf6cbf2e1a9f8750ecb29a111abc7437985c0d3f1f70a62b2b3f2175dd`，元数据记录 `repository_commit=5a88208...`、`working_tree_dirty=false`。
 
 ---
 
