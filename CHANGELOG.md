@@ -13,6 +13,16 @@
 
 ---
 
+## V14.10：产品化命令行演示（2026-09-19）
+
+- 新增 `python main.py demo`：从十二个预登记事故中交互选择案例，读取公开故障日志，并复用现有持久化调查、Human-in-the-loop、Memory、只读补丁与隔离验证链路；没有为演示另写答案或修改 Agent 控制流。
+- 演示默认使用静态 `full` Profile；`--runtime` 必须显式开启，仍受环境开关、Harness 白名单和逐次人工审批约束。真实模型调用前默认要求输入 `yes`，`--yes` 只跳过费用确认，不能绕过 Runtime 或补丁验证审批。
+- 新增 `--case`、`--with-patch`、`--verify-patch` 和 `--output`。补丁选项沿用 V13 安全边界，正式工作区不变；自定义输出只能位于 `.incident_reports/demos/` 且必须是 Markdown，保存层拒绝覆盖已有文件。
+- 每次演示导出事故输入、诊断摘要、Claim–Evidence Ledger、Evidence、修复建议、完整 Observation 轨迹、运行指标，以及可选补丁和隔离验证结果。演示输入只来自 `demo_app/logs/`，不读取 Evaluation 标准答案。
+- 新增七项回归测试，覆盖目录与十二个入口一致、公开日志隔离、交互选择、默认静态 Profile、完整 Markdown、输出路径限制和拒绝覆盖；完整离线测试增至 216 项。实现与测试阶段未调用真实模型，不产生 API Token 费用。
+
+---
+
 ## V14.9：严格确定性评分与正式评测（2026-09-19）
 
 - 将 `expected_exception` 从观察指标提升为确定性通过条件；最终报告未明确写出案例要求的异常类型时，以 `missing_expected_exception:<类型>` 失败。

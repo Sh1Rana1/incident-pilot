@@ -1,6 +1,6 @@
-# IncidentPilot V14.9 · Strict Evaluation & LLM Judge
+# IncidentPilot V14.10 · Product Demo
 
-V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge；V14.9 将异常类型和全部必需代码文件覆盖提升为确定性硬门槛，并据此生成最终正式数据。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
+V14.1 增加了异步资料查询与订单支付重试两个离线故障案例，V14.2 冻结五个 development 案例的 V13 基线，V14.3 完成五项可泛化调查优化和正式对照。V14.4–V14.6 保持 Agent 控制流不变，分三批加入时区、缓存 Key、分页边界、环境变量改名、事务回滚和 SDK 契约变化案例，达到十二个可执行场景、十五个 Evaluation 案例、二十二个 Harness Check。V14.7 新增完全本地的确定性审计；V14.8 在其上增加默认关闭的单次 LLM Judge；V14.9 将异常类型和全部必需代码文件覆盖提升为确定性硬门槛，并据此生成最终正式数据；V14.10 增加面向面试演示的 `main.py demo` 入口，复用同一调查、审批、补丁和持久化链路，把过程与结果导出为不可覆盖的 Markdown。Judge 默认复用当前 DeepSeek/OpenAI-compatible 服务，也可以通过独立 `JUDGE_*` 配置切换模型。
 
 LLM Judge 是旁路语义评分，不是新的通过门槛：本地确定性评测仍独占引用真实性、Evidence 落地、Claim 覆盖、Runtime 要求和最终 `passed`。Judge 每份最终报告最多调用一次，不使用工具、不读取 Observation 来源、不自动重试或格式修复；高分不能挽救确定性失败，低分也不能撤销确定性通过。`ENABLE_LLM_JUDGE=false` 且未传 `--judge` 时，现有 Evaluation 的调用次数和费用完全不变。
 
@@ -279,7 +279,38 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 选择 1 只批准当前预登记调用；选择 2 不执行但允许 Agent 根据静态证据继续；选择 3 取消本次调查。运行结束后建议将开关恢复为 `false`。
 
-### 1.5 V13 稳定持久化命令
+### 1.5 运行产品化演示
+
+最简单的演示命令是：
+
+```powershell
+.\.venv\Scripts\python.exe main.py demo
+```
+
+程序会从十二个预登记事故中让你选择一个，只读取对应的公开故障日志，然后复用正式的持久化 Agent 流程。调查步骤、工具调用、人工审批和最终报告会实时显示；结束后，系统把事故输入、根因、Claim–Evidence 证据链、完整 Observation 轨迹、运行指标和可选补丁结果保存到 `.incident_reports/demos/` 下的 Markdown 文件。演示入口不会读取 `demo_app/evals/` 中的标准答案。
+
+演示使用真实模型并产生 Token 费用，因此默认会先要求输入 `yes`。已明确接受费用时，可以直接选择案例并跳过这一次费用确认：
+
+```powershell
+.\.venv\Scripts\python.exe main.py demo --case missing_user_id --yes
+```
+
+默认使用静态 `full` Profile。只有需要展示预登记 Runtime Harness 时才增加 `--runtime`；它仍要求 `ENABLE_RUNTIME_TOOLS=true`，并在真正启动子进程前逐次请求人工批准。`--yes` 只确认模型费用，绝不会跳过 Runtime 或补丁验证审批：
+
+```powershell
+.\.venv\Scripts\python.exe main.py demo --case documentation_required --runtime
+```
+
+诊断完成后还可以生成只读补丁，或在临时副本中进行隔离验证。两种模式都会增加一次补丁生成模型调用；正式工作区不会被修改：
+
+```powershell
+.\.venv\Scripts\python.exe main.py demo --case missing_user_id --with-patch
+.\.venv\Scripts\python.exe main.py demo --case missing_user_id --verify-patch
+```
+
+`--output` 只接受 `.incident_reports/demos/` 内的 `.md` 路径，且拒绝覆盖已有报告。不指定时使用案例名和调查 ID 自动生成唯一文件名。
+
+### 1.6 V13 稳定持久化命令
 
 不带参数的 `main.py` 仍是原来的连续交互模式。如果要在退出程序后继续调查，使用持久化命令：
 
@@ -303,7 +334,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 `new` 遇到 Runtime 或费用审查时，Checkpoint 已经先同步写入 SQLite，然后 CLI 当场显示审批问题；用户选择后，程序在内部调用 `Command(resume=...)`，不需要复制调查 ID。恢复后若再次出现审批，会在同一终端继续询问。只有按 `Ctrl+C`、输入流结束或主动使用 `--detach` 时才需要稍后运行 `resume`。数据保存在 `.incident_state/incident_pilot.sqlite3`，该目录被 Git 和 Agent 文件工具同时忽略。
 
-### 1.6 第一次测试 Safe Test Harness
+### 1.7 第一次测试 Safe Test Harness
 
 先在 `api.env` 设置 `ENABLE_RUNTIME_TOOLS=true`，保持 `MAX_RUNTIME_CALLS=1`，再运行：
 
@@ -328,7 +359,7 @@ RUNTIME_TIMEOUT_SECONDS=5
 
 新增自己的检查时，只编辑 `harness.json`，选择受支持 Runner 并填写固定 target；先运行 `main.py doctor` 检查清单，再让 Agent 使用它。不要把用户输入、模型输出或可变字符串写进 target。`harness.json` 是权限清单，不应当由 Agent 自动改写。
 
-### 1.7 生成提案并进行 V13 隔离验证
+### 1.8 生成提案并进行 V13 隔离验证
 
 补丁生成必须显式开启，否则现有调查和 Evaluation 不会多花一次模型调用：
 
@@ -381,7 +412,7 @@ validation_errors
 .\.venv\Scripts\python.exe -m unittest -v test_patch_verification
 ```
 
-### 1.8 长期事故记忆命令
+### 1.9 长期事故记忆命令
 
 持久化调查只有在 `stop_reason=completed`、置信度为 medium/high，且报告同时存在 Claim 和 Evidence 时，才会生成 `pending` 记忆。候选不会自动影响新调查：
 
@@ -404,7 +435,7 @@ validation_errors
 
 `memory list/search/approve/reject/forget` 都只操作本地 SQLite，不调用模型，不产生 Token 费用。
 
-### 1.9 启动自检与稳定依赖
+### 1.10 启动自检与稳定依赖
 
 `doctor` 是一个完全本地的快速检查：验证 Python 至少为 3.10、五个直接依赖已经安装、`api.env` 和 `harness.json` 能通过校验，以及 SQLite 状态库能够打开和自动迁移。它只显示模型名、输出模式、Runtime 开关、检查数量和清单哈希前缀，绝不会打印 API Key，也不会创建模型客户端或访问网络。
 
@@ -485,7 +516,8 @@ incident-pilot/
 ├── api.env.example             # API 配置模板
 ├── requirements.txt            # Python 依赖
 ├── requirements.lock           # 当前完整测试通过的直接依赖版本
-├── main.py                     # 传统交互、持久化调查、自检和 Memory 命令
+├── main.py                     # 传统交互、持久化调查、产品演示和管理命令
+├── demo_cli.py                 # 固定演示目录、公开日志与 Markdown 导出
 ├── doctor.py                   # Python、依赖、配置、Harness 与 SQLite 自检
 ├── agent.py                    # Agent 公共接口、图调用与运行指标
 ├── session_agent.py            # 持久化调查的启动、恢复和结果组装
@@ -528,6 +560,7 @@ incident-pilot/
 ├── test_agent.py
 ├── test_context_manager.py
 ├── test_demo_app.py
+├── test_demo_cli.py            # 演示目录、答案隔离、输出边界和报告测试
 ├── test_doctor.py              # 不联网启动自检与密钥隐藏测试
 ├── test_evaluation.py
 ├── test_experiments.py
@@ -1474,10 +1507,11 @@ ExperimentRun
 .venv\Scripts\python.exe -m unittest discover -v
 ```
 
-当前共有 209 项测试，覆盖：
+当前共有 216 项测试，覆盖：
 
 - 完整 Benchmark 静态审计及 JSON 报告持久化；
 - LLM Judge 同服务默认配置与独立模型覆盖、单次无工具调用、无效 JSON 不重试、Token 记录、双向硬门槛隔离、终端聚合和费用保护；
+- 产品演示目录与十二个可执行场景一致、只读取公开日志、默认静态 Profile、显式费用确认、Markdown 证据链与完整轨迹、输出目录隔离和拒绝覆盖；
 
 - 模型服务能力配置；
 - 工具注册、严格参数和统一错误；
@@ -1746,7 +1780,7 @@ ModuleNotFoundError: No module named 'langgraph'
 1. 保留已经冻结的 V13 与 V14.3 五案例正式对照；修复后的 `retry_non_idempotent` 单案例验收只作为来源合约的补充证据，不回写或重算正式 3/5 快照；
 2. Expanded Benchmark 已达到十二个可执行场景；十五个 Evaluation 的划分、复现、Harness、文档索引、答案隔离、关键词来源和冻结结果哈希已纳入 V14.7 完整确定性审计；
 3. V14.8/V14.9 已完成默认关闭的单次 LLM Judge、同模型烟雾验收以及 development 5、hidden 7、Runtime 1 的正式单次评测；未来如需更强结论，应改用独立 Judge 模型并增加重复次数，而不是覆盖当前结果；
-4. 下一步补充命令行产品演示；若进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
+4. V14.10 已完成命令行产品演示，能够选择预登记事故、显示实时调查、复用人工审批，并导出包含 Claim–Evidence 和完整轨迹的 Markdown；后续重点转为发布、简历和面试材料。如进入自动修复产品阶段，再单独设计正式工作区应用审批、Git 分支/提交、回滚和容器级执行隔离。
 
 系统把可持久的 Human-in-the-loop 放在每个执行型 Runtime 工具之前，把另一类人工审批用于长期知识进入召回池之前，并为 V13 临时补丁写入建立了独立审批门。未来若允许写入正式工作区，还必须新增更高权限的应用审批，不能把“允许临时验证”解释成“允许修改源码”。
 

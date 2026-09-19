@@ -1,10 +1,19 @@
-"""V13 命令行入口：持久调查、补丁提案与隔离验证。"""
+"""V14.10 命令行入口：调查、产品演示、补丁提案与隔离验证。"""
 
 import argparse
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from agent import run_agent
+from demo_cli import (
+    DEMO_CASE_MAP,
+    choose_demo_case,
+    format_demo_markdown,
+    load_demo_question,
+    resolve_demo_output,
+    save_demo_markdown,
+)
 from doctor import print_doctor_report, run_doctor
 from models import (
     HumanReviewRequest,
@@ -195,7 +204,7 @@ def _print_session(record: SessionRecord) -> None:
 
 def _legacy_main() -> None:
     """保留 V9 的单进程使用方式，避免破坏原有习惯和调用方。"""
-    print("IncidentPilot V13 · Patch Sandbox Verification（输入 exit 退出）")
+    print("IncidentPilot V14.10 · Evidence-Driven Diagnosis（输入 exit 退出）")
     while True:
         try:
             question = read_multiline_question()
@@ -313,6 +322,53 @@ def _doctor_command() -> bool:
     return report.ok
 
 
+def _demo_command(args: argparse.Namespace, input_fn: InputFunction = input) -> None:
+    case_id = args.case_id or choose_demo_case(input_fn=input_fn)
+    if case_id is None:
+        print("已取消演示。")
+        return
+    if not args.yes:
+        print(
+            "\n该演示会把选定的公开故障日志发送给 api.env 配置的模型，"
+            "并产生真实 Token 费用。"
+        )
+        if args.with_patch or args.verify_patch:
+            print("补丁提案会额外增加一次模型调用。")
+        try:
+            confirmed = input_fn("输入 yes 继续，其他输入取消：").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirmed = ""
+        if confirmed != "yes":
+            print("已取消演示，未创建模型调查。")
+            return
+
+    question = load_demo_question(case_id)
+    profile = "full_runtime" if args.runtime else "full"
+    print(
+        f"\n=== IncidentPilot 演示：{case_id} ===\n"
+        f"Profile：{profile}\n"
+        "调查步骤将在下方实时显示。"
+    )
+    with SessionStore() as store:
+        record = start_session(
+            store,
+            question,
+            tool_profile=profile,
+            generate_patch_proposal=args.with_patch or args.verify_patch,
+            verify_patch_proposal=args.verify_patch,
+        )
+        record = _continue_pending_reviews(store, record, input_fn=input_fn)
+        _print_session(record)
+        _print_memory_candidate(store, record)
+        output_path = resolve_demo_output(
+            case_id,
+            record.thread_id,
+            requested=args.output,
+        )
+        save_demo_markdown(format_demo_markdown(case_id, record), output_path)
+    print(f"\nMarkdown 演示报告：{output_path}")
+
+
 def _print_memory(memory: IncidentMemory, score: float | None = None) -> None:
     score_text = f"  相似度={score:.3f}" if score is not None else ""
     print(f"\n{memory.memory_id}  [{memory.status}]{score_text}")
@@ -346,7 +402,9 @@ def _memory_command(args: argparse.Namespace) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="IncidentPilot V13 Patch Sandbox Verification")
+    parser = argparse.ArgumentParser(
+        description="IncidentPilot V14.10 Evidence-Driven Diagnosis"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     new_parser = commands.add_parser("new", help="创建调查并当场处理审批")
     new_parser.add_argument(
@@ -374,6 +432,41 @@ def _build_parser() -> argparse.ArgumentParser:
     resume_parser = commands.add_parser("resume", help="审批并恢复中断的调查")
     resume_parser.add_argument("thread_id")
     commands.add_parser("doctor", help="检查依赖、api.env 和本地状态库，不调用模型")
+    demo_parser = commands.add_parser(
+        "demo",
+        help="选择预登记事故，展示调查过程并导出 Markdown 报告",
+    )
+    demo_parser.add_argument(
+        "--case",
+        dest="case_id",
+        choices=list(DEMO_CASE_MAP),
+        help="跳过交互选择，直接运行指定预登记案例",
+    )
+    demo_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="确认本次演示会调用真实模型；不替代 Runtime 或补丁验证审批",
+    )
+    demo_parser.add_argument(
+        "--runtime",
+        action="store_true",
+        help="使用 full_runtime；仍受环境开关、固定清单和逐次人工审批约束",
+    )
+    demo_parser.add_argument(
+        "--with-patch",
+        action="store_true",
+        help="诊断后额外生成只读补丁提案；会增加一次模型调用",
+    )
+    demo_parser.add_argument(
+        "--verify-patch",
+        action="store_true",
+        help="生成补丁并在独立审批后于临时副本运行预登记检查",
+    )
+    demo_parser.add_argument(
+        "--output",
+        type=Path,
+        help="Markdown 输出；只允许位于 .incident_reports/demos/ 且拒绝覆盖",
+    )
     memory_parser = commands.add_parser("memory", help="管理长期事故记忆")
     memory_commands = memory_parser.add_subparsers(
         dest="memory_command", required=True
@@ -393,7 +486,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """无参数保留传统模式；显式子命令使用 V13 持久化入口。"""
+    """无参数保留传统模式；显式子命令提供持久化调查和产品演示。"""
     args_list = [] if argv is None else argv
     if not args_list:
         _legacy_main()
@@ -416,6 +509,8 @@ def main(argv: list[str] | None = None) -> int:
             _resume_session(args.thread_id)
         elif args.command == "doctor":
             return 0 if _doctor_command() else 1
+        elif args.command == "demo":
+            _demo_command(args)
         elif args.command == "memory":
             if getattr(args, "limit", 1) < 1:
                 raise ValueError("--limit 必须大于等于 1")

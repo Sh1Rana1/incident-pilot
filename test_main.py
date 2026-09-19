@@ -2,10 +2,12 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import main
 from models import HumanReviewRequest, IncidentReport
+from session_store import SessionRecord
+from test_evaluation import fake_result
 
 
 class MultilineInputTests(unittest.TestCase):
@@ -14,10 +16,17 @@ class MultilineInputTests(unittest.TestCase):
             ["new", "--detach", "--with-patch", "--verify-patch"]
         )
         doctor = main._build_parser().parse_args(["doctor"])
+        demo = main._build_parser().parse_args([
+            "demo", "--case", "missing_user_id", "--yes", "--with-patch"
+        ])
         self.assertTrue(detached.detach)
         self.assertTrue(detached.with_patch)
         self.assertTrue(detached.verify_patch)
         self.assertEqual(doctor.command, "doctor")
+        self.assertEqual(demo.command, "demo")
+        self.assertEqual(demo.case_id, "missing_user_id")
+        self.assertTrue(demo.yes)
+        self.assertTrue(demo.with_patch)
 
     @patch("main.resume_session")
     @patch("main.request_human_review", side_effect=["approve", "summarize"])
@@ -87,6 +96,63 @@ class MultilineInputTests(unittest.TestCase):
         self.assertEqual(args.memory_command, "search")
         self.assertEqual(args.query, ["KeyError", "user_id"])
         self.assertEqual(args.limit, 2)
+
+    @patch("main.save_demo_markdown")
+    @patch("main.format_demo_markdown", return_value="# demo\n")
+    @patch("main.resolve_demo_output", return_value=main.Path("demo.md"))
+    @patch("main._print_memory_candidate")
+    @patch("main._print_session")
+    @patch("main._continue_pending_reviews")
+    @patch("main.start_session")
+    @patch("main.load_demo_question", return_value="demo question")
+    def test_demo_command_uses_static_profile_and_exports_markdown(
+        self,
+        _load_question,
+        start_session_mock,
+        continue_mock,
+        _print_session,
+        _print_memory,
+        _resolve_output,
+        _format_markdown,
+        save_markdown_mock,
+    ) -> None:
+        record = SessionRecord(
+            thread_id="demo-thread",
+            question="demo question",
+            status="completed",
+            tool_profile="full",
+            runtime_tools_enabled=False,
+            created_at="2026-09-19T00:00:00+00:00",
+            updated_at="2026-09-19T00:01:00+00:00",
+            result=fake_result(),
+        )
+        start_session_mock.return_value = record
+        continue_mock.return_value = record
+        manager = MagicMock()
+        store = manager.__enter__.return_value
+        args = SimpleNamespace(
+            case_id="missing_user_id",
+            yes=True,
+            runtime=False,
+            with_patch=False,
+            verify_patch=False,
+            output=None,
+        )
+
+        with patch("main.SessionStore", return_value=manager):
+            main._demo_command(
+                args,
+                input_fn=lambda _prompt: self.fail("--yes 不应再次询问费用确认"),
+            )
+
+        start_session_mock.assert_called_once_with(
+            store,
+            "demo question",
+            tool_profile="full",
+            generate_patch_proposal=False,
+            verify_patch_proposal=False,
+        )
+        save_markdown_mock.assert_called_once_with("# demo\n", main.Path("demo.md"))
 
     def test_traceback_lines_are_merged_into_one_question(self) -> None:
         entered_lines = iter([
